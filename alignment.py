@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Local alignment of observed chain sequences against their reference sequences."""
+"""Local alignment of observed chain sequences against their reference sequences with both chain IDs."""
 
 ###################################### IMPORTS AND CONSTANTS
 
@@ -25,7 +25,7 @@ class AlignmentMixin:
         """Compute a local alignment and return (stats, position_rows, sequence_to_reference).
 
         Args:
-            chain_id: Chain identifier.
+            chain_id: Chain key.
             reference: Reference sequence.
             observed: Observed sequence.
         """
@@ -35,6 +35,8 @@ class AlignmentMixin:
         alignments = self._local_aligner.align(reference, observed)
         if not alignments:
             return empty
+        data = self.chains[chain_id]
+        label, auth = data["chain_id"], data["auth_chain_id"]
         best = alignments[0]
         ref_aligned, obs_aligned = best
         ref_start, obs_start = int(best.coordinates[0, 0]), int(best.coordinates[1, 0])
@@ -60,7 +62,8 @@ class AlignmentMixin:
                 seq_to_ref[obs_pos] = ref_pos
             rows.append({
                 "structure_id": self.structure_id,
-                "chain_id": chain_id,
+                "chain_id": label,
+                "auth_chain_id": auth,
                 "alignment_position": column,
                 "ref": r,
                 "alt": o,
@@ -75,8 +78,10 @@ class AlignmentMixin:
         aligned_length = sum(counts.values())
         stats = {
             "structure_id": self.structure_id,
-            "query_id": f"{self.structure_id}_{chain_id}",
-            "ref_id": f"{self.structure_id}_{chain_id}_reference",
+            "chain_id": label,
+            "auth_chain_id": auth,
+            "query_id": f"{self.structure_id}_{label}",
+            "ref_id": f"{self.structure_id}_{label}_reference",
             "query_length": len(observed),
             "ref_length": len(reference),
             "aligned_length": aligned_length,

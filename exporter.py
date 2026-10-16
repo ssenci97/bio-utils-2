@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Writing PDB, FASTA, alignment, contact, and interface tables with a YAML manifest."""
+"""Writing PDB, FASTA, alignment, contact, and interface tables with a YAML manifest, using standard and author chain IDs."""
 
 ###################################### IMPORTS AND CONSTANTS
 
@@ -39,7 +39,7 @@ class ExportMixin:
 ###################################### STRUCTURE AND SEQUENCE EXPORT
 
     def to_pdb_string(self, chain_id=None, numbering="original"):
-        """Return the structure or one chain as PDB text with the chosen numbering.
+        """Return the structure or one chain as PDB text with author chain IDs and the chosen numbering.
 
         Args:
             chain_id: Chain to export, or None for all chains.
@@ -54,11 +54,12 @@ class ExportMixin:
             if str(chain.id) not in selected:
                 model.detach_child(chain.id)
         for chain in list(model.get_chains()):
-            chain_key = str(chain.id)
+            data = self.chains[str(chain.id)]
             if numbering == "sequential":
                 self._renumber(chain)
-            elif numbering == "reference" and self.chains[chain_key]["sequence_index_to_ref_index"]:
-                self._keep_mapped(chain, self.chains[chain_key]["sequence_index_to_ref_index"])
+            elif numbering == "reference" and data["sequence_index_to_ref_index"]:
+                self._keep_mapped(chain, data["sequence_index_to_ref_index"])
+            chain.id = data["auth_chain_id"]
         writer = PDBIO()
         writer.set_structure(structure)
         output = io.StringIO()
@@ -78,19 +79,19 @@ class ExportMixin:
         return output_path
 
     def to_fasta(self, output_path, reference=False):
-        """Write observed or reference sequences as FASTA and return its path.
+        """Write observed or reference sequences as FASTA with standard and author chain IDs in headers.
 
         Args:
             output_path: Destination file path.
             reference: Whether to write reference sequences, skipping chains without one.
         """
         lines = []
-        for chain_id, data in self.chains.items():
+        for data in self.chains.values():
             if reference and not data["reference_sequence"]:
                 continue
             sequence = data["reference_sequence"] if reference else data["sequence"]
             suffix = " reference" if reference else ""
-            lines.extend([f">{self.structure_id}_{chain_id}{suffix}", sequence])
+            lines.extend([f">{self.structure_id}_{data['chain_id']} auth_{data['auth_chain_id']}{suffix}", sequence])
         output_path = self._prepare_path(output_path)
         output_path.write_text("\n".join(lines) + "\n")
         return output_path
@@ -142,14 +143,16 @@ class ExportMixin:
             (f"{sid}_reference_sequences.fasta", lambda p: self.to_fasta(p, reference=True)),
         ]
         for chain_a, chain_b in (chain_pairs or itertools.combinations(self.chain_ids, 2)):
+            chain_a, chain_b = self._require_chain(chain_a), self._require_chain(chain_b)
+            pair = f"{self.chains[chain_a]['chain_id']}{self.chains[chain_b]['chain_id']}"
             try:
                 result = self.interface(chain_a, chain_b)
             except ValueError as ex:
-                print(f"[PYTHON-INFO] {sid}: interface {chain_a}{chain_b} skipped, {ex}")
+                print(f"[PYTHON-INFO] {sid}: interface {pair} skipped, {ex}")
                 continue
-            tasks.append((f"{sid}_{chain_a}{chain_b}_interface_complex.tsv",
+            tasks.append((f"{sid}_{pair}_interface_complex.tsv",
                           lambda p, r=result: pd.DataFrame([r["complex"]]).to_csv(p, sep="\t", index=False)))
-            tasks.append((f"{sid}_{chain_a}{chain_b}_interface_residues.tsv",
+            tasks.append((f"{sid}_{pair}_interface_residues.tsv",
                           lambda p, r=result: r["residues"].to_csv(p, sep="\t", index=False)))
         written = []
         for name, writer in tqdm(tasks, desc="saving", unit="file"):

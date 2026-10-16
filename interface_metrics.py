@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Pairwise interface metrics: buried surface area, heavy-atom contacts, distances, energies, and partners."""
+"""Pairwise interface metrics with standard and author chain IDs: buried surface area, contacts, distances, energies, and partners."""
 
 ###################################### IMPORTS AND CONSTANTS
 
@@ -8,7 +8,7 @@ import pandas as pd
 from Bio.PDB.Model import Model
 from Bio.PDB.SASA import ShrakeRupley
 
-from constants import HYDRO, INTERFACE_RESIDUE_COLUMNS, TIEN, TO1
+from constants import HYDRO, INTERFACE_COMPLEX_COLUMNS, INTERFACE_RESIDUE_COLUMNS, TIEN, TO1
 
 ###################################### SASA AND ATOM GEOMETRY
 
@@ -41,7 +41,7 @@ class InterfaceMixin:
 
     @staticmethod
     def _residue_sasa(chains):
-        """Return a dict mapping (chain_id, resid) to per-residue SASA for the given chains."""
+        """Return a dict mapping (chain_key, resid) to per-residue SASA for the given chains."""
         model = Model(0)
         for chain in chains:
             model.add(chain.copy())
@@ -108,8 +108,8 @@ class InterfaceMixin:
         """Compute complex-level and residue-level interface metrics for two chains.
 
         Args:
-            chain_a: First chain identifier.
-            chain_b: Second chain identifier.
+            chain_a: First chain key.
+            chain_b: Second chain key.
         """
         cutoff = self.config["interface_contact_cutoff_a"]
         score_cutoff = self.config["interface_score_cutoff_a"]
@@ -130,8 +130,12 @@ class InterfaceMixin:
         hb_h = np.array([self._hydrophobicity(r) for r in rb])
         with np.errstate(invalid="ignore", divide="ignore"):
             energy = np.where(mask, -0.5 * (ha_h[:, None] + hb_h[None]) * (1 - dmin / score_cutoff), 0.0)
+        label_a, auth_a = self.chains[chain_a]["chain_id"], self.chains[chain_a]["auth_chain_id"]
+        label_b, auth_b = self.chains[chain_b]["chain_id"], self.chains[chain_b]["auth_chain_id"]
         complex_row = {
             "structure": self.structure_id,
+            "chain_a": label_a, "auth_chain_a": auth_a,
+            "chain_b": label_b, "auth_chain_b": auth_b,
             "len_res_a": len(ra), "len_res_b": len(rb),
             "len_atoms_a": len(xa), "len_atoms_b": len(xb),
             "dASA_A2": round(dasa, 2),
@@ -152,6 +156,8 @@ class InterfaceMixin:
         )
         rows = []
         for cid, oid, residues, other, iso, en_sum, npart, dm, pairs in sides:
+            label, auth = self.chains[cid]["chain_id"], self.chains[cid]["auth_chain_id"]
+            olabel = self.chains[oid]["chain_id"]
             for k, residue in enumerate(residues):
                 if not npart[k]:
                     continue
@@ -159,10 +165,11 @@ class InterfaceMixin:
                 dsasa = float(iso[key] - cpx[key])
                 maxa = TIEN.get(residue.get_resname().upper())
                 en = float(en_sum[k])
-                labels = [f"{oid}{other[j].id[1]} {other[j].get_resname()}" for j in np.flatnonzero(pairs[k])]
+                labels = [f"{olabel}{other[j].id[1]} {other[j].get_resname()}" for j in np.flatnonzero(pairs[k])]
                 rows.append({
                     "structure": self.structure_id,
-                    "chain": cid,
+                    "chain": label,
+                    "auth_chain": auth,
                     "resid": residue.id[1],
                     "resname": residue.get_resname(),
                     "dSASA_A2": round(dsasa, 2),
@@ -182,8 +189,8 @@ class InterfaceMixin:
         """Return {'complex': dict, 'residues': DataFrame} for two chains, using the cache when possible.
 
         Args:
-            chain_a: First chain identifier.
-            chain_b: Second chain identifier.
+            chain_a: First chain identifier, standard or author.
+            chain_b: Second chain identifier, standard or author.
         """
         chain_a, chain_b = self._require_chain(chain_a), self._require_chain(chain_b)
         if chain_a == chain_b:
@@ -228,7 +235,7 @@ class InterfaceMixin:
         return self.interface_complex(chain_a, chain_b)["contact_score"]
 
     def partners(self, chain_a="A", chain_b="B"):
-        """Return a dict mapping interface residue labels to their partner labels."""
+        """Return a dict mapping standard-ID interface residue labels to their partner labels."""
         frame = self.interface_residues(chain_a, chain_b)
         return {
             f"{row.chain}{row.resid} {row.resname}": self._split_partners(row.partners)

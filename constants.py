@@ -31,23 +31,27 @@ GLOBAL_MISMATCH_SCORE = -1.0
 GLOBAL_GAP_OPEN_SCORE = -5.0
 GLOBAL_GAP_EXTEND_SCORE = -0.5
 CONTACT_COLUMNS = [
-    "chain_1", "resnum_1", "resname_1", "sequence_index_1",
-    "chain_2", "resnum_2", "resname_2", "sequence_index_2",
+    "chain_1", "auth_chain_1", "resnum_1", "resname_1", "sequence_index_1",
+    "chain_2", "auth_chain_2", "resnum_2", "resname_2", "sequence_index_2",
     "min_distance_nm", "contact_type",
 ]
-CONTACT_SEQUENCE_COLUMNS = ["structure_id", "chain_id", "sequence", "contacts", "contact_type", "cutoff_nm"]
+CONTACT_SEQUENCE_COLUMNS = [
+    "structure_id", "chain_id", "auth_chain_id", "sequence", "contacts",
+    "contact_type", "mdtraj_scheme", "cutoff_nm",
+]
 RESIDUE_COLUMNS = [
-    "structure_id", "chain_id", "pdb_resnum", "resname",
+    "structure_id", "chain_id", "auth_chain_id", "pdb_resnum", "resname",
     "sequence_index", "reference_index",
 ]
-MAPPING_COLUMNS = ["pdb_resnum", "sequence_index", "reference_index"]
+MAPPING_COLUMNS = ["chain_id", "auth_chain_id", "pdb_resnum", "sequence_index", "reference_index"]
 INTERFACE_COMPLEX_COLUMNS = [
-    "structure", "len_res_a", "len_res_b", "len_atoms_a", "len_atoms_b", "dASA_A2",
+    "structure", "chain_a", "auth_chain_a", "chain_b", "auth_chain_b",
+    "len_res_a", "len_res_b", "len_atoms_a", "len_atoms_b", "dASA_A2",
     "initial_sasa_A2", "frac_dASA", "n_contacts", "iface_res_a", "iface_res_b",
     "min_dist_A", "contact_score",
 ]
 INTERFACE_RESIDUE_COLUMNS = [
-    "structure", "chain", "resid", "resname", "dSASA_A2", "isolated_sasa_A2", "rel_dSASA",
+    "structure", "chain", "auth_chain", "resid", "resname", "dSASA_A2", "isolated_sasa_A2", "rel_dSASA",
     "n_partners", "min_dist_A", "contact_energy", "energy_per_partner", "partners",
 ]
 HYDRO = {"A": 0.62, "R": -2.53, "N": -0.78, "D": -0.90, "C": 0.29, "Q": -0.85, "E": -0.74, "G": 0.48, "H": -0.40, "I": 1.38, "L": 1.06, "K": -1.50, "M": 0.64, "F": 1.19, "P": 0.12, "S": -0.18, "T": -0.05, "W": 0.81, "Y": 0.26, "V": 1.08}

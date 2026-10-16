@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""SyncedStructure class assembled from the mixin modules."""
+"""SyncedStructure class assembled from the mixin modules, keyed by author chain IDs by default."""
 
 ###################################### IMPORTS AND CONSTANTS
 
@@ -11,17 +11,18 @@ from ensemble import EnsembleMixin
 from exporter import ExportMixin
 from helpers import make_global_aligner, make_local_aligner, resolve_config
 from interface_metrics import InterfaceMixin
-from loaders import LoaderMixin
+from loaders import KEY_MODES, LoaderMixin
 from metadata import MetadataMixin
 from residues import ResidueMixin
+from viz3d import Viz3DMixin
 
 ###################################### SYNCHRONIZED STRUCTURE
 
 
 class SyncedStructure(LoaderMixin, MetadataMixin, ChainMixin, AlignmentMixin, ResidueMixin,
-                      ContactMixin, ExportMixin, InterfaceMixin, EnsembleMixin):
+                      ContactMixin, ExportMixin, InterfaceMixin, EnsembleMixin, Viz3DMixin):
     def __init__(self, structure, structure_id="structure", mmcif_dict=None,
-                 file_format="cif", config_path=DEFAULT_CONFIG_PATH, default_entity_id=None):
+                 file_format="cif", config_path=DEFAULT_CONFIG_PATH, default_entity_id=None, key_by="auth"):
         """Build the synchronized structure from a Biopython Structure and load its YAML config.
 
         Args:
@@ -31,7 +32,11 @@ class SyncedStructure(LoaderMixin, MetadataMixin, ChainMixin, AlignmentMixin, Re
             file_format: Source format, 'cif' or 'pdb'.
             config_path: Path to the YAML config file.
             default_entity_id: Entity ID used when mmCIF metadata is missing.
+            key_by: 'auth' (default) keys chains by author IDs, 'label' by label IDs.
         """
+        if str(key_by).lower() not in KEY_MODES:
+            raise ValueError(f"key_by must be one of {KEY_MODES}.")
+        self.key_by = str(key_by).lower()
         self.structure = structure
         self.structure_id = str(structure_id)
         self.file_format = str(file_format).lower()

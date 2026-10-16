@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Residue numbering, reference-index mapping, and per-residue tables."""
+"""Residue numbering, reference-index mapping, and per-residue tables with standard and author chain IDs."""
 
 ###################################### IMPORTS AND CONSTANTS
 
@@ -17,23 +17,25 @@ class ResidueMixin:
     def _residue_frame(self, chain_id):
         """Return a DataFrame with one row per observed residue of a chain and its reference index."""
         _, _, seq_to_ref = self._local_alignment(chain_id)
+        data = self.chains[chain_id]
         rows = [
             {
                 "structure_id": self.structure_id,
-                "chain_id": chain_id,
+                "chain_id": data["chain_id"],
+                "auth_chain_id": data["auth_chain_id"],
                 "pdb_resnum": residue.id[1],
                 "resname": residue.resname.strip().upper(),
                 "sequence_index": position,
                 "reference_index": seq_to_ref.get(position),
             }
-            for position, residue in enumerate(self.chains[chain_id]["residues"], start=1)
+            for position, residue in enumerate(data["residues"], start=1)
         ]
         frame = pd.DataFrame(rows, columns=RESIDUE_COLUMNS)
         frame["reference_index"] = frame["reference_index"].astype("Int64")
         return frame
 
     def get_residue_mapping(self, chain_id):
-        """Return a DataFrame with pdb_resnum, sequence_index, and reference_index for one chain."""
+        """Return a DataFrame with standard and author chain IDs, pdb_resnum, sequence_index, and reference_index."""
         chain_id = self._require_chain(chain_id)
         return self._residue_frame(chain_id)[MAPPING_COLUMNS].reset_index(drop=True)
 
