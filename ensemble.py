@@ -1,8 +1,9 @@
 #!/usr/bin/env python
-"""Parallel interface analysis over a directory of structures with ensemble-wide residue frequencies."""
+"""Parallel all-pairs interface analysis over a directory of structures with ensemble-wide residue frequencies, runnable from the command line with YAML parameters."""
 
 ###################################### IMPORTS AND CONSTANTS
 
+import argparse
 import multiprocessing
 import os
 import time
@@ -10,10 +11,14 @@ from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
+import yaml
 from tqdm import tqdm
 
 from constants import CONFIG_SECTION, DEFAULT_CONFIG, DEFAULT_CONFIG_PATH, INTERFACE_COMPLEX_COLUMNS, INTERFACE_RESIDUE_COLUMNS, SUPPORTED_SUFFIXES
 from helpers import finish_log, resolve_config
+from loaders import KEY_MODES
+
+SCRIPT_NAME = "ensemble"
 
 ###################################### ENSEMBLE FREQUENCIES
 
@@ -21,10 +26,10 @@ from helpers import finish_log, resolve_config
 class EnsembleMixin:
     @classmethod
     def add_interface_frequencies(cls, frame):
-        """Add single_freq and pair_freq columns counting the structures containing each residue or pair.
+        """Add single_freq and pair_freq columns counting the structures containing each residue or residue pair.
 
         Args:
-            frame: Residue-level interface DataFrame with a structure column.
+            frame: Residue-level interface DataFrame with structure, chain, resid, resname, partners columns.
         """
         frame = frame.copy()
         keys = (frame["chain"].astype(str) + frame["resid"].astype(str) + " " + frame["resname"].astype(str)).tolist()
@@ -44,16 +49,15 @@ class EnsembleMixin:
 ###################################### ENSEMBLE RUNNER
 
     @classmethod
-    def interface_ensemble(cls, input_dir, chain_a="A", chain_b="B", workers=None,
-                           config_path=DEFAULT_CONFIG_PATH, outdir=None):
-        """Compute interfaces for every structure in a directory in parallel.
+    def interface_ensemble(cls, input_dir, workers=None, config_path=DEFAULT_CONFIG_PATH,
+                           key_by="auth", outdir=None):
+        """Compute all chain-pair interfaces for every structure in a directory in parallel.
 
         Args:
             input_dir: Directory containing structure files.
-            chain_a: First chain identifier.
-            chain_b: Second chain identifier.
             workers: Number of worker processes, or None for all CPUs.
             config_path: Path to the YAML config file.
+            key_by: 'auth' (default) keys chains by author IDs, 'label' by label IDs.
             outdir: Optional directory for the TSV score tables.
 
         Returns:
@@ -65,45 +69,86 @@ class EnsembleMixin:
         if not files:
             raise FileNotFoundError(f"No structure files found in {input_dir}")
         resolve_config(config_path, DEFAULT_CONFIG, CONFIG_SECTION)
-        jobs = [(str(p), chain_a, chain_b, str(config_path), cls) for p in files]
-        complexes, frames, skipped = [], [], []
+        jobs = [(str(p), str(config_path), key_by, cls) for p in files]
+        complexes, residues, skipped = [], [], []
         with multiprocessing.Pool(workers or os.cpu_count()) as pool:
-            for name, complex_row, frame, error in tqdm(
-                pool.imap_unordered(_interface_job, jobs), total=len(jobs), desc="interfaces",
+            for name, complex_frame, residue_frame, error in tqdm(
+                pool.imap_unordered(_interface_job, jobs), total=len(jobs), desc="structures", unit="file",
             ):
                 if error:
                     skipped.append(name)
                     print(f"[PYTHON-INFO] {name}: skipped, {error}")
                     continue
-                complexes.append(complex_row)
-                frames.append(frame)
-        complex_frame = pd.DataFrame(complexes, columns=INTERFACE_COMPLEX_COLUMNS).sort_values("structure", ignore_index=True)
-        residue_frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=INTERFACE_RESIDUE_COLUMNS)
-        residue_frame = cls.add_interface_frequencies(residue_frame).sort_values(["structure", "chain", "resid"], ignore_index=True)
+                complexes.append(complex_frame)
+                residues.append(residue_frame)
+        complex_all = (pd.concat(complexes, ignore_index=True) if complexes
+                       else pd.DataFrame(columns=INTERFACE_COMPLEX_COLUMNS))
+        complex_all = complex_all.sort_values(["structure", "chain_a", "chain_b"], ignore_index=True)
+        residue_all = (pd.concat(residues, ignore_index=True) if residues
+                       else pd.DataFrame(columns=INTERFACE_RESIDUE_COLUMNS))
+        residue_all = cls.add_interface_frequencies(residue_all).sort_values(
+            ["structure", "pair", "chain", "resid"], ignore_index=True,
+        )
         if outdir:
             outdir = cls._prepare_dir(outdir)
             tag = input_dir.resolve().name
-            complex_frame.to_csv(outdir / f"{tag}_complex_scores.tsv", sep="\t", index=False)
-            residue_frame.to_csv(outdir / f"{tag}_residue_scores.tsv", sep="\t", index=False)
-        finish_log(start, f"Interfaces {chain_a}-{chain_b} for {len(complexes)} structures, skipped {len(skipped)}")
-        return {"complex": complex_frame, "residues": residue_frame, "skipped": skipped}
+            complex_all.to_csv(outdir / f"{tag}_complex_scores.tsv", sep="\t", index=False)
+            residue_all.to_csv(outdir / f"{tag}_residue_scores.tsv", sep="\t", index=False)
+        finish_log(start, f"All-pair interfaces for {len(complexes)} structures, skipped {len(skipped)}")
+        return {"complex": complex_all, "residues": residue_all, "skipped": skipped}
 
 ###################################### WORKERS
 
 
 def _interface_job(job):
-    """Compute one structure's interface in a worker process.
+    """Compute all chain-pair interfaces of one structure in a worker process.
 
     Args:
-        job: Tuple of (path, chain_a, chain_b, config_path, owner_class).
+        job: Tuple of (path, config_path, key_by, owner_class).
 
     Returns:
-        Tuple of (name, complex_row, residue_frame, error_message_or_None).
+        Tuple of (name, complex_frame, residue_frame, error_message_or_None).
     """
-    path, chain_a, chain_b, config_path, owner = job
+    path, config_path, key_by, owner = job
     name = Path(path).stem
     try:
-        result = owner.from_Path(path, config_path=config_path).interface(chain_a, chain_b)
+        result = owner.from_Path(path, config_path=config_path, key_by=key_by).interface_all()
         return name, result["complex"], result["residues"], None
     except Exception as ex:
         return name, None, None, str(ex).replace("\n", " ")
+
+###################################### COMMAND LINE
+
+
+def main():
+    """Parse arguments, optionally read them from YAML, optionally write them to YAML, and run the ensemble."""
+    parser = argparse.ArgumentParser(description="All-pair interface analysis over a directory of structures.")
+    parser.add_argument("--input-dir", default=None)
+    parser.add_argument("--workers", type=int, default=None)
+    parser.add_argument("--config-path", default=DEFAULT_CONFIG_PATH)
+    parser.add_argument("--key-by", default="auth", choices=KEY_MODES)
+    parser.add_argument("--outdir", default=None)
+    parser.add_argument("--yaml-in", default=None)
+    parser.add_argument("--yaml-out", default=None)
+    args = parser.parse_args()
+    if args.yaml_in:
+        saved = (yaml.safe_load(Path(args.yaml_in).read_text()) or {}).get(SCRIPT_NAME) or {}
+        parser.set_defaults(**saved)
+        args = parser.parse_args()
+    if args.yaml_out:
+        path = Path(args.yaml_out)
+        data = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
+        data[SCRIPT_NAME] = {k: v for k, v in vars(args).items() if k not in ("yaml_in", "yaml_out")}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml.safe_dump(data, sort_keys=False))
+    if not args.input_dir:
+        parser.error("--input-dir is required, either as a flag or in the --yaml-in file.")
+    from synced_structure import SyncedStructure
+    SyncedStructure.interface_ensemble(
+        args.input_dir, workers=args.workers, config_path=args.config_path,
+        key_by=args.key_by, outdir=args.outdir,
+    )
+
+
+if __name__ == "__main__":
+    main()
