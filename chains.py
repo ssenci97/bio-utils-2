@@ -9,8 +9,8 @@ import itertools
 import numpy as np
 import pandas as pd
 
-from constants import DEFAULT_CUTOFF
-from helpers import clean_sequence, is_protein_residue, residue_to_letter
+from constants import DEFAULT_CONTACT_MOIETIES, DEFAULT_CUTOFF, REPRESENTATIVE_ATOMS
+from helpers import clean_sequence, is_protein_residue, residue_moiety, residue_to_letter
 
 ###################################### CHAIN MANAGEMENT
 
@@ -401,7 +401,7 @@ class ChainMixin:
 ###################################### CONTACT PARTNERS
 
     @staticmethod
-    def _coords_touch(xa, xb, cutoff, block=512):
+    def _coords_touch(xa, xb, cutoff, block=256):
         """Return True if any coordinate in xa lies within cutoff of any coordinate in xb.
 
         Args:
@@ -418,23 +418,36 @@ class ChainMixin:
                 return True
         return False
 
+    def _representative_coordinates(self):
+        """Return {chain_key: representative atom coordinates in nm} for the contact moieties of each chain."""
+        coords = {}
+        for key, data in self.chains.items():
+            points = []
+            for residue in data["chain"].get_residues():
+                moiety = residue_moiety(residue)
+                if moiety not in DEFAULT_CONTACT_MOIETIES:
+                    continue
+                for name in REPRESENTATIVE_ATOMS[moiety]:
+                    if name in residue:
+                        points.append(residue[name].coord)
+                        break
+            if points:
+                coords[key] = np.asarray(points, dtype=np.float64) / 10.0
+        return coords
+
     def _chain_contact_partners(self, cutoff=DEFAULT_CUTOFF):
-        """Return {chain_key: sorted chain_keys in contact} from inter-chain C-alpha distances.
+        """Return {chain_key: sorted chain_keys in contact} from inter-chain representative-atom distances.
 
         Args:
-            cutoff: C-alpha contact cutoff in nm.
+            cutoff: Contact cutoff in nm.
         """
-        coords = {}
-        for chain_id, _, residue in self._ca_records():
-            coords.setdefault(chain_id, []).append(residue["CA"].coord)
-        coords = {chain_id: np.asarray(values, dtype=np.float32) / 10.0 for chain_id, values in coords.items()}
-        partners = {chain_id: [] for chain_id in self.chains}
+        partners = {key: [] for key in self.chains}
+        coords = self._representative_coordinates()
         for chain_a, chain_b in itertools.combinations(coords, 2):
             if self._coords_touch(coords[chain_a], coords[chain_b], cutoff):
                 partners[chain_a].append(chain_b)
                 partners[chain_b].append(chain_a)
-        return {chain_id: sorted(values) for chain_id, values in partners.items()}
-
+        return {key: sorted(values) for key, values in partners.items()}
 
 ###################################### SUMMARY
 
