@@ -268,6 +268,9 @@ class ContactMixin:
                                        contacts=None, scheme="ca", moieties=DEFAULT_CONTACT_MOIETIES):
         """Return the contact string laid out along the full reference sequence.
 
+        Reference positions not mapped to an included observed residue are 'X'. Mapped positions are
+        '1' if in contact and '0' otherwise, including residues without a contact point.
+
         Args:
             chain_id: Chain identifier.
             cutoff: Distance cutoff in nm, used if contacts is None.
@@ -286,7 +289,7 @@ class ContactMixin:
         bits = ["X"] * len(reference)
         for seq_index, ref_index in data["sequence_index_to_ref_index"].items():
             if seq_index in kept and seq_index < len(observed) and 0 <= ref_index < len(bits):
-                bits[ref_index] = observed[seq_index]
+                bits[ref_index] = "1" if observed[seq_index] == "1" else "0"
         return "".join(bits)
 
     def export_contact_sequences(self, output_path, cutoff=DEFAULT_CUTOFF, contact_type=DEFAULT_CONTACT_TYPE,
