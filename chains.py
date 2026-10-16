@@ -4,9 +4,12 @@
 ###################################### IMPORTS AND CONSTANTS
 
 import copy
+import itertools
 
+import numpy as np
 import pandas as pd
 
+from constants import DEFAULT_CUTOFF
 from helpers import clean_sequence, is_protein_residue, residue_to_letter
 
 ###################################### CHAIN MANAGEMENT
@@ -394,6 +397,44 @@ class ChainMixin:
             for old_id, new_id in renames.items():
                 self.set_reference_sequence(new_id, targets[new_id])
         return pd.DataFrame(rows, columns=["new_chain_id", "old_chain_id", "old_auth_chain_id", "identity_percent", "status"])
+
+###################################### CONTACT PARTNERS
+
+    @staticmethod
+    def _coords_touch(xa, xb, cutoff, block=512):
+        """Return True if any coordinate in xa lies within cutoff of any coordinate in xb.
+
+        Args:
+            xa: Coordinates of the first set, in nm.
+            xb: Coordinates of the second set, in nm.
+            cutoff: Distance cutoff in nm.
+            block: Number of rows of xa compared at once.
+        """
+        if (xa.min(axis=0) > xb.max(axis=0) + cutoff).any() or (xb.min(axis=0) > xa.max(axis=0) + cutoff).any():
+            return False
+        limit = cutoff * cutoff
+        for start in range(0, len(xa), block):
+            if (((xa[start:start + block, None] - xb[None]) ** 2).sum(axis=-1) <= limit).any():
+                return True
+        return False
+
+    def _chain_contact_partners(self, cutoff=DEFAULT_CUTOFF):
+        """Return {chain_key: sorted chain_keys in contact} from inter-chain C-alpha distances.
+
+        Args:
+            cutoff: C-alpha contact cutoff in nm.
+        """
+        coords = {}
+        for chain_id, _, residue in self._ca_records():
+            coords.setdefault(chain_id, []).append(residue["CA"].coord)
+        coords = {chain_id: np.asarray(values, dtype=np.float32) / 10.0 for chain_id, values in coords.items()}
+        partners = {chain_id: [] for chain_id in self.chains}
+        for chain_a, chain_b in itertools.combinations(coords, 2):
+            if self._coords_touch(coords[chain_a], coords[chain_b], cutoff):
+                partners[chain_a].append(chain_b)
+                partners[chain_b].append(chain_a)
+        return {chain_id: sorted(values) for chain_id, values in partners.items()}
+
 
 ###################################### SUMMARY
 
