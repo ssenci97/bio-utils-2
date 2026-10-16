@@ -7,6 +7,7 @@ from alignment import AlignmentMixin
 from chains import ChainMixin
 from constants import CONFIG_SECTION, DEFAULT_CONFIG, DEFAULT_CONFIG_PATH
 from contacts import ContactMixin
+from contact_map import ContactMapMixin
 from ensemble import EnsembleMixin
 from exporter import ExportMixin
 from helpers import make_global_aligner, make_local_aligner, resolve_config
@@ -15,12 +16,13 @@ from loaders import KEY_MODES, LoaderMixin
 from metadata import MetadataMixin
 from residues import ResidueMixin
 from viz3d import Viz3DMixin
+from viz3d import side_by_side
 
 ###################################### SYNCHRONIZED STRUCTURE
 
 
 class SyncedStructure(LoaderMixin, MetadataMixin, ChainMixin, AlignmentMixin, ResidueMixin,
-                      ContactMixin, ExportMixin, InterfaceMixin, EnsembleMixin, Viz3DMixin):
+                      ContactMixin, ContactMapMixin, ExportMixin, InterfaceMixin, EnsembleMixin, Viz3DMixin):
     def __init__(self, structure, structure_id="structure", mmcif_dict=None,
                  file_format="cif", config_path=DEFAULT_CONFIG_PATH, default_entity_id=None, key_by="auth"):
         """Build the synchronized structure from a Biopython Structure and load its YAML config.

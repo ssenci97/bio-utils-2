@@ -13,7 +13,11 @@ import yaml
 from Bio.Align import PairwiseAligner
 from Bio.PDB.Polypeptide import is_aa, protein_letters_3to1_extended
 
-from constants import GLOBAL_GAP_EXTEND_SCORE, GLOBAL_GAP_OPEN_SCORE, GLOBAL_MATCH_SCORE, GLOBAL_MISMATCH_SCORE
+from constants import (
+    GLOBAL_GAP_EXTEND_SCORE, GLOBAL_GAP_OPEN_SCORE, GLOBAL_MATCH_SCORE, GLOBAL_MISMATCH_SCORE,
+    MOIETY_ION, MOIETY_LIGAND, MOIETY_NUCLEIC, MOIETY_PROTEIN, MOIETY_WATER,
+    NUCLEIC_RESNAMES, WATER_RESNAMES,
+)
 
 ###################################### CONFIG AND LOGGING
 
@@ -94,6 +98,22 @@ def is_protein_residue(residue):
     """Return True if the residue is recognized as an amino acid."""
     return is_aa(residue, standard=False)
 
+def residue_moiety(residue):
+    """Return the biomolecule type of a residue: 'protein', 'nucleic', 'ligand', 'ion', or 'water'.
+
+    Args:
+        residue: Biopython Residue.
+    """
+    name = residue.get_resname().strip().upper()
+    if residue.id[0] == "W" or name in WATER_RESNAMES:
+        return MOIETY_WATER
+    if is_protein_residue(residue):
+        return MOIETY_PROTEIN
+    if name in NUCLEIC_RESNAMES:
+        return MOIETY_NUCLEIC
+    if len(residue) == 1:
+        return MOIETY_ION
+    return MOIETY_LIGAND
 
 def make_global_aligner():
     """Return a global PairwiseAligner with the fixed scoring scheme."""

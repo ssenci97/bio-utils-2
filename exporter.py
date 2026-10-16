@@ -141,6 +141,7 @@ class ExportMixin:
             (f"{sid}_contact_sequences_reference.csv", lambda p: self.export_contact_sequences(p, cutoff=cutoff, contact_type="all", reference=True)),
             (f"{sid}_sequences.fasta", lambda p: self.to_fasta(p)),
             (f"{sid}_reference_sequences.fasta", lambda p: self.to_fasta(p, reference=True)),
+            (f"{sid}_moiety_summary.tsv", lambda p: self.moiety_summary.to_csv(p, sep="\t", index=False)),
         ]
         for chain_a, chain_b in (chain_pairs or itertools.combinations(self.chain_ids, 2)):
             chain_a, chain_b = self._require_chain(chain_a), self._require_chain(chain_b)

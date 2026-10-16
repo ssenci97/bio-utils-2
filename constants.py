@@ -26,6 +26,19 @@ DEFAULT_CONFIG = {
 }
 SUPPORTED_SUFFIXES = {".pdb", ".cif", ".mmcif"}
 NUMBERINGS = ("original", "sequential", "reference")
+
+MOIETY_PROTEIN = "protein"
+MOIETY_NUCLEIC = "nucleic"
+MOIETY_LIGAND = "ligand"
+MOIETY_ION = "ion"
+MOIETY_WATER = "water"
+MOIETIES = (MOIETY_PROTEIN, MOIETY_NUCLEIC, MOIETY_LIGAND, MOIETY_ION, MOIETY_WATER)
+DEFAULT_CONTACT_MOIETIES = (MOIETY_PROTEIN, MOIETY_NUCLEIC)
+NUCLEIC_RESNAMES = frozenset({"A", "C", "G", "U", "I", "DA", "DC", "DG", "DT", "DU", "DI"})
+WATER_RESNAMES = frozenset({"HOH", "WAT", "DOD", "H2O"})
+REPRESENTATIVE_ATOMS = {MOIETY_PROTEIN: ("CA",), MOIETY_NUCLEIC: ("C4'", "C1'", "P")}
+BACKBONE_ATOMS = frozenset({"N", "CA", "C", "O", "OXT"})
+
 GLOBAL_MATCH_SCORE = 2.0
 GLOBAL_MISMATCH_SCORE = -1.0
 GLOBAL_GAP_OPEN_SCORE = -5.0
@@ -33,7 +46,7 @@ GLOBAL_GAP_EXTEND_SCORE = -0.5
 CONTACT_COLUMNS = [
     "chain_1", "auth_chain_1", "resnum_1", "resname_1", "sequence_index_1",
     "chain_2", "auth_chain_2", "resnum_2", "resname_2", "sequence_index_2",
-    "min_distance_nm", "contact_type",
+    "min_distance_nm", "contact_type", "moiety_1", "moiety_2",
 ]
 CONTACT_SEQUENCE_COLUMNS = [
     "structure_id", "chain_id", "auth_chain_id", "sequence", "contacts",
@@ -41,8 +54,10 @@ CONTACT_SEQUENCE_COLUMNS = [
 ]
 RESIDUE_COLUMNS = [
     "structure_id", "chain_id", "auth_chain_id", "pdb_resnum", "resname",
-    "sequence_index", "reference_index",
+    "sequence_index", "reference_index", "moiety",
 ]
+MOIETY_SUMMARY_COLUMNS = ["structure_id", "chain_id", "auth_chain_id", "moiety", "residues", "atoms"]
+
 MAPPING_COLUMNS = ["chain_id", "auth_chain_id", "pdb_resnum", "sequence_index", "reference_index"]
 INTERFACE_COMPLEX_COLUMNS = [
     "structure", "chain_a", "auth_chain_a", "chain_b", "auth_chain_b",

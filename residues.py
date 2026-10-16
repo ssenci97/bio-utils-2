@@ -7,8 +7,8 @@ import copy
 
 import pandas as pd
 
-from constants import MAPPING_COLUMNS, RESIDUE_COLUMNS
-from helpers import is_protein_residue
+from constants import MAPPING_COLUMNS, MOIETIES, MOIETY_SUMMARY_COLUMNS, RESIDUE_COLUMNS
+from helpers import is_protein_residue, residue_moiety
 
 ###################################### RESIDUE MAPPING
 
@@ -27,6 +27,7 @@ class ResidueMixin:
                 "resname": residue.resname.strip().upper(),
                 "sequence_index": position,
                 "reference_index": seq_to_ref.get(position),
+                "moiety": residue_moiety(residue),
             }
             for position, residue in enumerate(data["residues"], start=1)
         ]
@@ -45,6 +46,37 @@ class ResidueMixin:
         if not self.chains:
             return pd.DataFrame(columns=RESIDUE_COLUMNS)
         return pd.concat([self._residue_frame(chain_id) for chain_id in self.chains], ignore_index=True)
+    @property
+    def moiety_summary(self):
+        """Return one row per chain and biomolecule type with residue and atom counts."""
+        rows = []
+        for chain_id, data in self.chains.items():
+            counts = {}
+            for residue in data["residues"]:
+                moiety = residue_moiety(residue)
+                n_res, n_atoms = counts.get(moiety, (0, 0))
+                counts[moiety] = (n_res + 1, n_atoms + len(residue))
+            for moiety, (n_res, n_atoms) in counts.items():
+                rows.append({
+                    "structure_id": self.structure_id,
+                    "chain_id": data["chain_id"],
+                    "auth_chain_id": data["auth_chain_id"],
+                    "moiety": moiety,
+                    "residues": n_res,
+                    "atoms": n_atoms,
+                })
+        return pd.DataFrame(rows, columns=MOIETY_SUMMARY_COLUMNS)
+
+    def chains_by_moiety(self, moiety):
+        """Return the chain IDs that contain at least one residue of a biomolecule type.
+
+        Args:
+            moiety: One of 'protein', 'nucleic', 'ligand', or 'water'.
+        """
+        if moiety not in MOIETIES:
+            raise ValueError(f"moiety must be one of {MOIETIES}.")
+        frame = self.moiety_summary
+        return frame.loc[frame["moiety"] == moiety, "chain_id"].drop_duplicates().tolist()
 
     def to_dataframe(self):
         """Alias for residue_map."""
