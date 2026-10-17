@@ -6,7 +6,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 import pandas as pd, requests, yaml
 from tqdm import tqdm
-from SyncedStructure import SyncedStructure
+from synced_structure import SyncedStructure
 ###################################### constants
 SCRIPT = Path(__file__).stem
 ROOT = Path(__file__).resolve().parent
