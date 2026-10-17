@@ -1,12 +1,18 @@
+parallel_interfaces:
+  inputs:
+  - cfg/configs.yaml
+  - BioLip-3693_ids.txt
+  outdir: /orfeo/cephfs/scratch/area/ssenci/senci_projects/TOOLS/bio-utils-2/data/interfaces
+  workers: 4
 synced_structure:
-  chain_seqs_outdir: data/chains_seqs
-  chain_refseqs_outdir: data/chains_refseqs
-  aln_outdir: data/aln
-  save_outdir: data/saved
+  aln_extend_gap_score: -0.5
   aln_match_score: 1
   aln_mismatch_score: -1
   aln_open_gap_score: -2
-  aln_extend_gap_score: -0.5
+  aln_outdir: data/aln
+  chain_refseqs_outdir: data/chains_refseqs
+  chain_seqs_outdir: data/chains_seqs
+  interface_block_size: 1000
   interface_contact_cutoff_a: 4.5
   interface_score_cutoff_a: 12.0
-  interface_block_size: 1000
+  save_outdir: data/saved
