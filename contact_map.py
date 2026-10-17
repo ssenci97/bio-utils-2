@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Contact maps and statistics for chains: pair maps with grayscale background contacts, two-chain and three-chain block maps with chain outlines and optional pLDDT tracks, tick and label controls, contact statistics, and a summary panel."""
+"""Contact maps and statistics for chains: pair maps with grayscale background contacts, two-chain, three-chain, and four-chain block maps with chain outlines and optional pLDDT tracks, tick and label controls, contact statistics, and a summary panel."""
 
 ###################################### IMPORTS AND CONSTANTS
 
@@ -19,6 +19,7 @@ CONTACT_MAP_BACKGROUND = "white"
 CONTACT_MAP_COLOR = "#c0392b"
 CONTACT_MAP_CMAP = "viridis_r"
 CONTACT_MAP_SIZE_IN = 3.5
+CONTACT_FOUR_SIZE_IN = 4.0
 CONTACT_MAP_DPI = 150
 CONTACT_FONT_PT_PER_IN = 4.0
 CONTACT_FONT_MIN_PT = 10.0
@@ -44,6 +45,8 @@ TWO_BOX_LW = 0.5
 TWO_TRACK_OFFSET = 1.5
 THREE_PAIRS = ((0, 1), (0, 2), (1, 2))
 THREE_PAIR_COLORS = ("#c0392b", "#2980b9", "#27ae60")
+FOUR_PAIRS = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+FOUR_PAIR_COLORS = ("#c0392b", "#2980b9", "#27ae60", "#8e44ad", "#d35400", "#16a085")
 PLDDT_BANDS = (("≥90", "#0053D6"), ("70–90", "#65CBF3"), ("50–70", "#FFDB13"), ("<50", "#FF7D45"))
 PLDDT_MISSING_COLOR = "#d0d0d0"
 COMPLETE_MIN_SEPARATION = 2
@@ -718,7 +721,7 @@ class ContactMapMixin:
                           min_marker_pt=CONTACT_MAP_MIN_MARKER_PT, show_color_legend=False,
                           show_distance_legend=False,
                           dpi=CONTACT_MAP_DPI, title=None, ax=None, save_path=None):
-        """Plot two chains on each axis of one contact map, with a thin square around each chain.
+        """Plot two chains on one contact map, with solid contact squares, a dashed chain boundary, and a thin square around each chain.
 
         Each axis lists chain A's residues followed by chain B's. Every residue pair up to gray_cutoff is
         drawn in grayscale by distance. Within cutoff, intra-chain contacts are drawn in intra_color and
@@ -735,8 +738,8 @@ class ContactMapMixin:
             inter_color: Color of inter-chain contacts within cutoff.
             intra_color: Color of intra-chain contacts within cutoff.
             background: Background color.
-            box_color: Color of the outline around each chain.
-            box_lw: Outline width in points.
+            box_color: Color of the outline and dashed boundary around each chain.
+            box_lw: Outline and dashed boundary width in points.
             plddt: Whether to draw pLDDT tracks. Requires AlphaFold models, where pLDDT is in the B-factor column.
             min_separation: Smallest sequence separation kept for intra-chain contacts.
             size_in: Figure width and height in inches.
@@ -812,6 +815,10 @@ class ContactMapMixin:
             ax.scatter(np.full(size, -TWO_TRACK_OFFSET), positions, c=colors, s=marker_area, marker="s",
                        linewidths=0, clip_on=False, zorder=2)
 
+        boundaries = np.array([n1 - 0.5])
+        ax.hlines(boundaries, -0.5, size - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
+        ax.vlines(boundaries, -0.5, size - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
+
         for start, length in ((0, n1), (n1, n2)):
             ax.add_patch(Rectangle((start - 0.5, start - 0.5), length, length, fill=False,
                                    edgecolor=box_color, linewidth=box_lw, zorder=3))
@@ -854,7 +861,7 @@ class ContactMapMixin:
                             min_marker_pt=CONTACT_MAP_MIN_MARKER_PT, show_color_legend=False,
                             show_distance_legend=False,
                             dpi=CONTACT_MAP_DPI, title=None, ax=None, save_path=None):
-        """Plot three chains on one contact map, with a thin square around each chain.
+        """Plot three chains on one contact map, with solid contact squares, dashed chain boundaries, and a thin square around each chain.
 
         Each axis lists chain A's residues, then chain B's, then chain C's. Every residue pair up to
         gray_cutoff is drawn in grayscale by distance. Within cutoff, intra-chain contacts are drawn in
@@ -873,8 +880,8 @@ class ContactMapMixin:
             pair_colors: Colors of the inter-chain contacts for the pairs (A-B, A-C, B-C).
             intra_color: Color of intra-chain contacts within cutoff.
             background: Background color.
-            box_color: Color of the outline around each chain.
-            box_lw: Outline width in points.
+            box_color: Color of the outline and dashed boundaries around each chain.
+            box_lw: Outline and dashed boundary width in points.
             plddt: Whether to draw pLDDT tracks. Requires AlphaFold models, where pLDDT is in the B-factor column.
             min_separation: Smallest sequence separation kept for intra-chain contacts.
             size_in: Figure width and height in inches.
@@ -959,6 +966,10 @@ class ContactMapMixin:
             ax.scatter(np.full(size, -TWO_TRACK_OFFSET), positions, c=colors, s=marker_area, marker="s",
                        linewidths=0, clip_on=False, zorder=2)
 
+        boundaries = offsets[1:] - 0.5
+        ax.hlines(boundaries, -0.5, size - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
+        ax.vlines(boundaries, -0.5, size - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
+
         for start, length in zip(offsets, sizes):
             ax.add_patch(Rectangle((start - 0.5, start - 0.5), length, length, fill=False,
                                    edgecolor=box_color, linewidth=box_lw, zorder=3))
@@ -982,6 +993,157 @@ class ContactMapMixin:
             handles = [Patch(facecolor=intra_color, label="intra-chain")]
             handles += [Patch(facecolor=pair_colors[p], label=f"{names[a]}-{names[b]}")
                         for p, (a, b) in enumerate(THREE_PAIRS)]
+            if plddt:
+                handles += [Patch(facecolor=color, label=f"pLDDT {label}") for label, color in PLDDT_BANDS]
+            ax.legend(handles=handles, loc="upper center",
+                      bbox_to_anchor=(0.5, _legend_offset(size_in, font_size, len(handles), 2)), ncol=2,
+                      fontsize=font_size, frameon=False)
+        if show_distance_legend:
+            colorbar = fig.colorbar(background_scatter, ax=ax, fraction=0.046, pad=0.04)
+            colorbar.set_label("distance (nm)", fontsize=font_size)
+            colorbar.ax.tick_params(labelsize=font_size * CONTACT_TICK_RATIO)
+        if save_path is not None:
+            fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
+        return fig, ax
+
+    def plot_contacts_four(self, chain_a="A", chain_b="B", chain_c="C", chain_d="D", cutoff=DEFAULT_CUTOFF,
+                           moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca", gray_cutoff=None,
+                           pair_colors=FOUR_PAIR_COLORS, intra_color=TWO_INTRA_COLOR,
+                           background=CONTACT_MAP_BACKGROUND, box_color=TWO_BOX_COLOR, box_lw=TWO_BOX_LW,
+                           plddt=False, min_separation=COMPLETE_MIN_SEPARATION,
+                           size_in=CONTACT_FOUR_SIZE_IN, font_size=None,
+                           tick_step=CONTACT_MAP_TICK_STEP, n_ticks=CONTACT_MAP_N_TICKS, show_ticks=True,
+                           tick_size=None, tick_rotation=0, xlabel=None, ylabel=None,
+                           min_marker_pt=CONTACT_MAP_MIN_MARKER_PT, show_color_legend=False,
+                           show_distance_legend=False,
+                           dpi=CONTACT_MAP_DPI, title=None, ax=None, save_path=None):
+        """Plot four chains on one contact map, with solid contact squares, dashed chain boundaries, and a thin square around each chain.
+
+        Args:
+            chain_a: First chain, standard or author ID. Placed first on both axes.
+            chain_b: Second chain, standard or author ID. Placed after chain_a.
+            chain_c: Third chain, standard or author ID. Placed after chain_b.
+            chain_d: Fourth chain, standard or author ID. Placed after chain_c.
+            cutoff: Distance cutoff in nm for colored contacts.
+            moieties: Biomolecule types to include.
+            scheme: Contact scheme, 'ca' or 'sidechain'.
+            gray_cutoff: Upper distance limit of the grayscale background in nm. None uses CONTACT_GRAY_FACTOR times cutoff.
+            pair_colors: Colors of the inter-chain contacts for the pairs in FOUR_PAIRS order.
+            intra_color: Color of intra-chain contacts within cutoff.
+            background: Background color.
+            box_color: Color of the outline and dashed boundaries around each chain.
+            box_lw: Outline and dashed boundary width in points.
+            plddt: Whether to draw pLDDT tracks. Requires AlphaFold models, where pLDDT is in the B-factor column.
+            min_separation: Smallest sequence separation kept for intra-chain contacts.
+            size_in: Figure width and height in inches.
+            font_size: Base font size in points, or None to scale with size_in.
+            tick_step: Spacing of residue-number ticks, used when n_ticks is None.
+            n_ticks: Number of ticks per chain, spread evenly along each chain. Overrides tick_step.
+            show_ticks: Whether to draw tick marks and labels.
+            tick_size: Tick label font size, or None for a fixed share of font_size.
+            tick_rotation: X tick label rotation in degrees.
+            xlabel: X-axis title, or None for the quoted chain IDs.
+            ylabel: Y-axis title, or None for the quoted chain IDs.
+            min_marker_pt: Smallest marker side in points.
+            show_color_legend: Whether to draw the legend of intra-chain, inter-chain, and pLDDT colors.
+            show_distance_legend: Whether to draw the grayscale distance colorbar.
+            dpi: Figure resolution.
+            title: Optional title, or None for a default.
+            ax: Existing Matplotlib Axes to draw on, or None to create a figure.
+            save_path: Optional file path to save the figure to.
+
+        Returns:
+            Tuple of (figure, axes).
+        """
+        font_size = _font_size(size_in, font_size)
+        keys = [self._require_chain(c) for c in (chain_a, chain_b, chain_c, chain_d)]
+        if len(set(keys)) != 4:
+            raise ValueError("plot_contacts_four needs four different chains.")
+        labels = [self.chains[k]["chain_id"] for k in keys]
+        names = [self._chain_name(k) for k in keys]
+        sizes = [self.chains[k]["sequence_length"] for k in keys]
+        offsets = np.cumsum([0] + sizes[:-1])
+        gray_cutoff = _gray_limit(cutoff, gray_cutoff)
+        size = sum(sizes)
+
+        contacts = self.compute_contacts(cutoff=gray_cutoff, contact_type="all", chain_ids=keys,
+                                         scheme=scheme, moieties=moieties)
+        block = np.full((size, size), np.nan)
+        if not contacts.empty:
+            gi, gj, distance = self._multi_block_entries(contacts, labels, offsets)
+            block[gi, gj] = distance
+            block[gj, gi] = distance
+        block_of = np.repeat(np.arange(4), sizes)
+        pair_code = np.full((4, 4), -1)
+        for p, (a, b) in enumerate(FOUR_PAIRS):
+            pair_code[a, b] = pair_code[b, a] = p
+        index = np.arange(size)
+        same_block = block_of[:, None] == block_of[None, :]
+        pair_index = pair_code[block_of[:, None], block_of[None, :]]
+        far_enough = np.abs(index[:, None] - index[None, :]) >= min_separation
+        close = block <= cutoff
+        gray_mask = ~np.isnan(block) & (~same_block | far_enough)
+        intra_close = close & same_block & far_enough
+        inter_close = close & ~same_block
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(size_in, size_in), dpi=dpi)
+        else:
+            fig = ax.figure
+        margin = TWO_TRACK_OFFSET + 0.5 if plddt else 0.5
+        ax.set_facecolor(background)
+        ax.set_xlim(-margin, size - 0.5)
+        ax.set_ylim(size - 0.5, -margin)
+        ax.set_aspect("equal", adjustable="box")
+
+        marker_pt = _marker_points(size_in, size, size, min_marker_pt)
+        marker_area = marker_pt ** 2
+        rows, cols = np.nonzero(gray_mask)
+        background_scatter = ax.scatter(cols, rows, c=block[rows, cols], cmap=CONTACT_GRAY_CMAP,
+                                        vmin=0, vmax=gray_cutoff, s=marker_area, marker="s",
+                                        linewidths=0, zorder=1)
+        rows, cols = np.nonzero(intra_close)
+        ax.scatter(cols, rows, s=marker_area, marker="s", color=intra_color, linewidths=0, zorder=2)
+        for p, color in enumerate(pair_colors):
+            rows, cols = np.nonzero(inter_close & (pair_index == p))
+            ax.scatter(cols, rows, s=marker_area, marker="s", color=color, linewidths=0, zorder=2)
+
+        if plddt:
+            values = np.concatenate([self._residue_plddt(k) for k in keys])
+            colors = plddt_colors(values)
+            positions = np.arange(size)
+            ax.scatter(positions, np.full(size, -TWO_TRACK_OFFSET), c=colors, s=marker_area, marker="s",
+                       linewidths=0, clip_on=False, zorder=2)
+            ax.scatter(np.full(size, -TWO_TRACK_OFFSET), positions, c=colors, s=marker_area, marker="s",
+                       linewidths=0, clip_on=False, zorder=2)
+
+        boundaries = offsets[1:] - 0.5
+        ax.hlines(boundaries, -0.5, size - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
+        ax.vlines(boundaries, -0.5, size - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
+
+        for start, length in zip(offsets, sizes):
+            ax.add_patch(Rectangle((start - 0.5, start - 0.5), length, length, fill=False,
+                                   edgecolor=box_color, linewidth=box_lw, zorder=3))
+
+        ticks, tick_labels = [], []
+        for k_index, (k, offset) in enumerate(zip(keys, offsets)):
+            positions, chain_labels = self._tick_labels(k, self.chains[k]["sequence_length"], tick_step, n_ticks)
+            if k_index:
+                positions, chain_labels = positions[1:], chain_labels[1:]
+            ticks.append(positions + offset)
+            tick_labels += chain_labels
+        ticks = np.concatenate(ticks)
+        default_axis = " | ".join(names)
+        self._style_axes(ax, ticks, tick_labels, ticks, tick_labels, show_ticks=show_ticks,
+                         tick_size=tick_size, tick_rotation=tick_rotation,
+                         xlabel=xlabel or default_axis, ylabel=ylabel or default_axis, font_size=font_size)
+        ax.set_title(title or f"Contacts {'-'.join(names)} (cutoff {cutoff} nm)",
+                     fontsize=font_size * CONTACT_TITLE_RATIO)
+
+        if show_color_legend:
+            handles = [Patch(facecolor=intra_color, label="intra-chain")]
+            handles += [Patch(facecolor=pair_colors[p], label=f"{names[a]}-{names[b]}")
+                        for p, (a, b) in enumerate(FOUR_PAIRS)]
             if plddt:
                 handles += [Patch(facecolor=color, label=f"pLDDT {label}") for label, color in PLDDT_BANDS]
             ax.legend(handles=handles, loc="upper center",
