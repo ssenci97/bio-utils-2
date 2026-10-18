@@ -3,3 +3,5 @@ __pycache__/
 
 tutorial-data/*/
 logs/
+config/
+configs/
