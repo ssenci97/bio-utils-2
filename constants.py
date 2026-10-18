@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
 }
 SUPPORTED_SUFFIXES = {".pdb", ".cif", ".mmcif"}
 NUMBERINGS = ("original", "sequential", "reference")
+EXPORT_SUFFIX = ".csv"
 
 MOIETY_PROTEIN = "protein"
 MOIETY_NUCLEIC = "nucleic"
@@ -52,6 +53,7 @@ CONTACT_SEQUENCE_COLUMNS = [
     "structure_id", "chain_id", "auth_chain_id", "sequence", "contacts",
     "contact_type", "mdtraj_scheme", "cutoff_nm",
 ]
+CHAIN_COLUMNS = ["structure_id", "chain_id", "auth_chain_id", "entity_id", "description", "residues"]
 RESIDUE_COLUMNS = [
     "structure_id", "chain_id", "auth_chain_id", "pdb_resnum", "resname",
     "sequence_index", "reference_index", "moiety",

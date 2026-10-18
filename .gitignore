@@ -5,3 +5,5 @@ tutorial-data/*/
 logs/
 config/
 configs/
+data/
+.here

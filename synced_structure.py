@@ -17,7 +17,7 @@ from metadata import MetadataMixin
 from residues import ResidueMixin
 from viz3d import Viz3DMixin
 from viz3d import side_by_side
-
+from exporter import export_panels_pdf
 ###################################### SYNCHRONIZED STRUCTURE
 
 

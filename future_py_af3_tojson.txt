@@ -1,0 +1,38 @@
+import json
+
+SEED=42
+CHAIN_IDS = ("A", "B")
+INTERNAL_LINKER = "GGGGSGGGGSGGGGS"
+INTER_SCFV_LINKER = INTERNAL_LINKER + "SSGPGSS" + INTERNAL_LINKER
+af_json_fp = EXPORT_DIR / "ZIKAbs_AF3_jobs.json"
+
+ab1_heavy = interface_pairs_dict["6MID_E_H"]["H"]["seq"]
+ab1_light = interface_pairs_dict["6MID_E_L"]["L"]["seq"]
+ab2_heavy = interface_pairs_dict["5Y0A_B_F"]["F"]["seq"]
+ab2_light = interface_pairs_dict["5Y0A_B_G"]["G"]["seq"]
+envelope_seq = interface_pairs_dict["6MID_E_H"]["E"]["seq"]
+
+ab1_scfv = ab1_light + INTERNAL_LINKER + ab1_heavy
+ab2_scfv = ab2_heavy + INTERNAL_LINKER + ab2_light
+tandem_scfv1_scfv2 = ab1_scfv + INTER_SCFV_LINKER + ab2_scfv
+
+constructs = [
+    ("scFv1", ab1_scfv),
+    ("scFv2", ab2_scfv),
+    ("tandem_scfv1_scfv2", tandem_scfv1_scfv2),
+]
+
+af_jobs = [
+    {
+        "name": f"envelope_x2_x_{name}",
+        "modelSeeds": [str(SEED)],
+        "sequences": [
+            {"proteinChain": {"id": CHAIN_IDS[0], "sequence": envelope_seq, "count": 2}},
+            {"proteinChain": {"id": CHAIN_IDS[1], "sequence": antibody_seq, "count": 1}},
+        ],
+    }
+    for name, antibody_seq in constructs
+]
+
+af_json_fp.parent.mkdir(parents=True, exist_ok=True)
+af_json_fp.write_text(json.dumps(af_jobs, indent=2))

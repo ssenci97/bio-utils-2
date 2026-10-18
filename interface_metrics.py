@@ -258,6 +258,38 @@ class InterfaceMixin:
                          else pd.DataFrame(columns=INTERFACE_RESIDUE_COLUMNS))
         return {"complex": complex_frame, "residues": residue_frame}
 
+    def chain_partner_interfaces(self, chain_id, cutoff=1.2):
+        """Return {'{pdb_id}_{chain}_{partner}': interface dict} for every contact partner of one chain.
+
+        Args:
+            chain_id: Chain identifier, standard or author.
+            cutoff: Contact cutoff in nm, passed to _chain_contact_partners.
+        """
+        chain_id = self._require_chain(chain_id)
+        out = {}
+        for partner in self._chain_contact_partners(cutoff=cutoff).get(chain_id, []):
+            try:
+                out[f"{self.structure_id}_{chain_id}_{partner}"] = self.interface(chain_id, partner)
+            except ValueError as ex:
+                print(f"[PYTHON-INFO] {self.structure_id}: pair {chain_id}-{partner} skipped, {ex}")
+        return out
+
+    def chain_partner_frame(self, chain_id, cutoff=1.2, level="complex"):
+        """Return a DataFrame with one row per interface pair of a chain, or per residue of those pairs.
+
+        Args:
+            chain_id: Chain identifier, standard or author.
+            cutoff: Contact cutoff in nm, passed to chain_partner_interfaces.
+            level: 'complex' for one row per pair, or 'residues' for the residue rows of every pair.
+        """
+        if level not in ("complex", "residues"):
+            raise ValueError("level must be 'complex' or 'residues'.")
+        interfaces = self.chain_partner_interfaces(chain_id, cutoff=cutoff)
+        if level == "complex":
+            return pd.DataFrame([v["complex"] for v in interfaces.values()], columns=INTERFACE_COMPLEX_COLUMNS)
+        frames = [v["residues"] for v in interfaces.values()]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=INTERFACE_RESIDUE_COLUMNS)
+
     def interface_complex(self, chain_a="A", chain_b="B"):
         """Return complex-level interface metrics as a dict.
 
