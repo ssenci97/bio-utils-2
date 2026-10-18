@@ -1,3 +1,4 @@
+
 __pycache__/
 .ipynb_checkpoints/
 
@@ -7,3 +8,5 @@ config/
 configs/
 data/
 .here
+3Dmol-min.js
+
