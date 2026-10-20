@@ -12,7 +12,7 @@ import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 from matplotlib.patches import Patch, Rectangle
 
-from constants import DEFAULT_CONTACT_MOIETIES, DEFAULT_CUTOFF
+from constants import DEFAULT_CONTACT_MOIETIES, CONTACTS_CUTOFF_nm
 from helpers import residue_moiety
 
 CONTACT_MAP_BACKGROUND = "white"
@@ -217,7 +217,7 @@ class ContactMapMixin:
                                          chain_ids=sorted({chain_a, chain_b}), moieties=moieties)
         return self._matrix_from_contacts(contacts, chain_a, chain_b)
 
-    def contact_matrix(self, chain_a="A", chain_b=None, cutoff=DEFAULT_CUTOFF, moieties=DEFAULT_CONTACT_MOIETIES):
+    def contact_matrix(self, chain_a="A", chain_b=None, cutoff=CONTACTS_CUTOFF_nm, moieties=DEFAULT_CONTACT_MOIETIES):
         """Return the residue-pair minimum-distance matrix in nm, with NaN where residues are not in contact.
 
         Args:
@@ -234,7 +234,7 @@ class ContactMapMixin:
                                          chain_ids=sorted({chain_a, chain_b}), moieties=moieties)
         return self._matrix_from_contacts(contacts, chain_a, chain_b), label_a, label_b
 
-    def complete_contacts(self, chain_a="A", chain_b="B", cutoff=DEFAULT_CUTOFF,
+    def complete_contacts(self, chain_a="A", chain_b="B", cutoff=CONTACTS_CUTOFF_nm,
                           moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca",
                           min_separation=COMPLETE_MIN_SEPARATION):
         """Return the block contact matrix of two chains with intra- and inter-chain masks.
@@ -449,7 +449,7 @@ class ContactMapMixin:
         out[["median_nm", "mean_nm"]] = out[["median_nm", "mean_nm"]].round(4)
         return out[MOIETY_PAIR_COLUMNS]
 
-    def contact_statistics(self, cutoff=DEFAULT_CUTOFF, moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca"):
+    def contact_statistics(self, cutoff=CONTACTS_CUTOFF_nm, moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca"):
         """Return contact statistics as a dict of DataFrames.
 
         Keys:
@@ -629,7 +629,7 @@ class ContactMapMixin:
 
 ###################################### PUBLIC PLOTS
 
-    def plot_contact_map(self, chain_a="A", chain_b=None, cutoff=DEFAULT_CUTOFF,
+    def plot_contact_map(self, chain_a="A", chain_b=None, cutoff=CONTACTS_CUTOFF_nm,
                          moieties=DEFAULT_CONTACT_MOIETIES, value="contact", style="scatter",
                          gray=True, gray_cutoff=None,
                          background=CONTACT_MAP_BACKGROUND, color=CONTACT_MAP_COLOR, cmap=CONTACT_MAP_CMAP,
@@ -710,7 +710,7 @@ class ContactMapMixin:
             fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
         return fig, ax
 
-    def plot_contacts_two(self, chain_a="A", chain_b="B", cutoff=DEFAULT_CUTOFF,
+    def plot_contacts_two(self, chain_a="A", chain_b="B", cutoff=CONTACTS_CUTOFF_nm,
                           moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca", gray_cutoff=None,
                           inter_color=CONTACT_MAP_COLOR, intra_color=TWO_INTRA_COLOR,
                           background=CONTACT_MAP_BACKGROUND, box_color=TWO_BOX_COLOR, box_lw=TWO_BOX_LW,
@@ -850,7 +850,7 @@ class ContactMapMixin:
             fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
         return fig, ax
 
-    def plot_contacts_three(self, chain_a="A", chain_b="B", chain_c="C", cutoff=DEFAULT_CUTOFF,
+    def plot_contacts_three(self, chain_a="A", chain_b="B", chain_c="C", cutoff=CONTACTS_CUTOFF_nm,
                             moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca", gray_cutoff=None,
                             pair_colors=THREE_PAIR_COLORS, intra_color=TWO_INTRA_COLOR,
                             background=CONTACT_MAP_BACKGROUND, box_color=TWO_BOX_COLOR, box_lw=TWO_BOX_LW,
@@ -1006,7 +1006,7 @@ class ContactMapMixin:
             fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
         return fig, ax
 
-    def plot_contacts_four(self, chain_a="A", chain_b="B", chain_c="C", chain_d="D", cutoff=DEFAULT_CUTOFF,
+    def plot_contacts_four(self, chain_a="A", chain_b="B", chain_c="C", chain_d="D", cutoff=CONTACTS_CUTOFF_nm,
                            moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca", gray_cutoff=None,
                            pair_colors=FOUR_PAIR_COLORS, intra_color=TWO_INTRA_COLOR,
                            background=CONTACT_MAP_BACKGROUND, box_color=TWO_BOX_COLOR, box_lw=TWO_BOX_LW,
@@ -1157,7 +1157,7 @@ class ContactMapMixin:
             fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
         return fig, ax
 
-    def plot_contact_panel(self, chain_a="A", chain_b=None, cutoff=DEFAULT_CUTOFF,
+    def plot_contact_panel(self, chain_a="A", chain_b=None, cutoff=CONTACTS_CUTOFF_nm,
                            moieties=DEFAULT_CONTACT_MOIETIES, style="scatter",
                            background=CONTACT_MAP_BACKGROUND, color=CONTACT_MAP_COLOR,
                            size_in=CONTACT_PANEL_SIZE_IN, font_size=None,
