@@ -3,11 +3,12 @@
 
 ###################################### IMPORTS AND CONSTANTS
 
-from Bio.PDB.Polypeptide import protein_letters_3to1_extended
+from Bio.PDB.Polypeptide import protein_letters_3to1_extended, nucleic_letters_3_to_1_extented
+
 
 SEED = 42
 RCSB_URL = "https://files.rcsb.org/download/{}.cif"
-CONTACTS_CUTOFF_nm_nm = 0.8
+CONTACTS_CUTOFF_nm = 0.8
 DEFAULT_CONTACT_TYPE = "inter"
 DEFAULT_CONFIG_PATH = "configs/param_configs.yaml"
 CONFIG_SECTION = "synced_structure"
@@ -32,8 +33,26 @@ MOIETY_ION = "ion"
 MOIETY_WATER = "water"
 MOIETIES = (MOIETY_PROTEIN, MOIETY_NUCLEIC, MOIETY_LIGAND, MOIETY_ION, MOIETY_WATER)
 DEFAULT_CONTACT_MOIETIES = (MOIETY_PROTEIN, MOIETY_NUCLEIC)
-NUCLEIC_RESNAMES = frozenset({"A", "C", "G", "U", "I", "DA", "DC", "DG", "DT", "DU", "DI"})
+
+### token dictionaries
+PROTEIN_RESNAMES = frozenset(name.strip().upper() for name in protein_letters_3to1_extended)
+NUCLEIC_RESNAMES = frozenset(name.strip().upper() for name in nucleic_letters_3to1_extended)
 WATER_RESNAMES = frozenset({"HOH", "WAT", "DOD", "H2O"})
+ION_RESNAMES = frozenset({
+    # Alkali & Alkaline Earth Metals
+    "LI", "NA", "K", "RB", "CS",
+    "MG", "CA", "SR", "BA",
+    # Transition & Heavy Metals (commonly in metalloproteins/cofactors)
+    "ZN", "FE", "CU", "MN", "NI", "CO", "CD", "HG", "PB", "AL",
+    "AG", "AU", "PT", "PD", "SN", "SB", "BI", "CR", "V", "MO",
+    "W", "TI", "GA", "IN", "TL", "SC", "Y", "LA", "CE", "PR",
+    "ND", "SM", "EU", "GD", "TB", "DY", "HO", "ER", "TM", "YB",
+    "LU", "U", "TH",
+    # Halides & Simple Anions
+    "CL", "BR", "I", "F",  
+    # Common Physiological / Buffer Counter-Ions
+    "SO4", "PO4", "NO3", "NH4", "ACT"
+})
 REPRESENTATIVE_ATOMS = {MOIETY_PROTEIN: ("CA",), MOIETY_NUCLEIC: ("C4'", "C1'", "P")}
 BACKBONE_ATOMS = frozenset({"N", "CA", "C", "O", "OXT"})
 KEY_MODES = ("auth", "label")
