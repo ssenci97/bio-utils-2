@@ -435,7 +435,7 @@ class ChainMixin:
                 coords[key] = np.asarray(points, dtype=np.float64) / 10.0
         return coords
 
-    def _chain_contact_partners(self, cutoff=CONTACTS_CUTOFF_nm):
+    def chain_contact_partners(self, cutoff=CONTACTS_CUTOFF_nm):
         """Return {chain_key: sorted chain_keys in contact} from inter-chain representative-atom distances.
 
         Args:
