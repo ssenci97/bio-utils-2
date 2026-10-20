@@ -8,7 +8,6 @@ from chains import ChainMixin
 from constants import CONFIG_SECTION, DEFAULT_CONFIG, DEFAULT_CONFIG_PATH
 from contacts import ContactMixin
 from contact_map import ContactMapMixin
-from ensemble import EnsembleMixin
 from exporter import ExportMixin
 from helpers import make_global_aligner, make_local_aligner, resolve_config
 from interface_metrics import InterfaceMixin
