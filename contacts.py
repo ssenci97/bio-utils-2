@@ -11,7 +11,7 @@ import pandas as pd
 
 from constants import (
     BACKBONE_ATOMS, CONTACT_COLUMNS, CONTACT_SEQUENCE_COLUMNS, DEFAULT_CONTACT_MOIETIES,
-    DEFAULT_CONTACT_TYPE, DEFAULT_CUTOFF, MOIETIES, MOIETY_ION, MOIETY_LIGAND, MOIETY_PROTEIN,
+    DEFAULT_CONTACT_TYPE, CONTACTS_CUTOFF_nm, MOIETIES, MOIETY_ION, MOIETY_LIGAND, MOIETY_PROTEIN,
     REPRESENTATIVE_ATOMS,
 )
 from helpers import _check_contact_args, _keep_pair, residue_moiety
@@ -142,7 +142,7 @@ class ContactMixin:
 
 ###################################### CONTACTS
 
-    def compute_contacts(self, cutoff=DEFAULT_CUTOFF, contact_type=DEFAULT_CONTACT_TYPE, chain_ids=None,
+    def compute_contacts(self, cutoff=CONTACTS_CUTOFF_nm, contact_type=DEFAULT_CONTACT_TYPE, chain_ids=None,
                          scheme="ca", moieties=DEFAULT_CONTACT_MOIETIES):
         """Return a DataFrame of residue pairs closer than the cutoff in nm, with standard and author chain IDs.
 
@@ -246,7 +246,7 @@ class ContactMixin:
             bits[index] = "1"
         return bits
 
-    def get_contact_sequence(self, chain_id, cutoff=DEFAULT_CUTOFF, contact_type=DEFAULT_CONTACT_TYPE,
+    def get_contact_sequence(self, chain_id, cutoff=CONTACTS_CUTOFF_nm, contact_type=DEFAULT_CONTACT_TYPE,
                              contacts=None, scheme="ca", moieties=DEFAULT_CONTACT_MOIETIES):
         """Return a per-residue string of X (no contact point), 0 (no contact), or 1 (contact).
 
@@ -264,7 +264,7 @@ class ContactMixin:
         bits = self._observed_bits(chain_id, cutoff, contact_type, contacts, scheme, moieties)
         return "".join(bits[index] for index in self._string_indices(chain_id, moieties))
 
-    def get_reference_contact_sequence(self, chain_id, cutoff=DEFAULT_CUTOFF, contact_type=DEFAULT_CONTACT_TYPE,
+    def get_reference_contact_sequence(self, chain_id, cutoff=CONTACTS_CUTOFF_nm, contact_type=DEFAULT_CONTACT_TYPE,
                                        contacts=None, scheme="ca", moieties=DEFAULT_CONTACT_MOIETIES):
         """Return the contact string laid out along the full reference sequence.
 
@@ -292,7 +292,7 @@ class ContactMixin:
                 bits[ref_index] = "1" if observed[seq_index] == "1" else "0"
         return "".join(bits)
 
-    def export_contact_sequences(self, output_path, cutoff=DEFAULT_CUTOFF, contact_type=DEFAULT_CONTACT_TYPE,
+    def export_contact_sequences(self, output_path, cutoff=CONTACTS_CUTOFF_nm, contact_type=DEFAULT_CONTACT_TYPE,
                                  reference=False, scheme="ca", moieties=DEFAULT_CONTACT_MOIETIES):
         """Write each chain's sequence and contact string to a CSV file and return its path.
 

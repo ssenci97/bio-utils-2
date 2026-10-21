@@ -4,17 +4,15 @@
 ###################################### IMPORTS AND CONSTANTS
 
 from Bio.PDB.Polypeptide import protein_letters_3to1_extended
+from Bio.Data.PDBData import nucleic_letters_3to1, nucleic_letters_3to1_extended
 
 SEED = 42
 RCSB_URL = "https://files.rcsb.org/download/{}.cif"
-DEFAULT_CUTOFF = 0.8
+CONTACTS_CUTOFF_nm = 0.8
 DEFAULT_CONTACT_TYPE = "inter"
 DEFAULT_CONFIG_PATH = "configs/param_configs.yaml"
 CONFIG_SECTION = "synced_structure"
 DEFAULT_CONFIG = {
-    "chain_seqs_outdir": "data/chains_seqs",
-    "chain_refseqs_outdir": "data/chains_refseqs",
-    "aln_outdir": "data/aln",
     "save_outdir": "data/saved",
     "aln_match_score": 1,
     "aln_mismatch_score": -1,
@@ -35,10 +33,29 @@ MOIETY_ION = "ion"
 MOIETY_WATER = "water"
 MOIETIES = (MOIETY_PROTEIN, MOIETY_NUCLEIC, MOIETY_LIGAND, MOIETY_ION, MOIETY_WATER)
 DEFAULT_CONTACT_MOIETIES = (MOIETY_PROTEIN, MOIETY_NUCLEIC)
-NUCLEIC_RESNAMES = frozenset({"A", "C", "G", "U", "I", "DA", "DC", "DG", "DT", "DU", "DI"})
+
+### token dictionaries
+PROTEIN_RESNAMES = frozenset(name.strip().upper() for name in protein_letters_3to1_extended)
+NUCLEIC_RESNAMES = frozenset(name.strip().upper() for name in nucleic_letters_3to1_extended)
 WATER_RESNAMES = frozenset({"HOH", "WAT", "DOD", "H2O"})
+ION_RESNAMES = frozenset({
+    # Alkali & Alkaline Earth Metals
+    "LI", "NA", "K", "RB", "CS",
+    "MG", "CA", "SR", "BA",
+    # Transition & Heavy Metals (commonly in metalloproteins/cofactors)
+    "ZN", "FE", "CU", "MN", "NI", "CO", "CD", "HG", "PB", "AL",
+    "AG", "AU", "PT", "PD", "SN", "SB", "BI", "CR", "V", "MO",
+    "W", "TI", "GA", "IN", "TL", "SC", "Y", "LA", "CE", "PR",
+    "ND", "SM", "EU", "GD", "TB", "DY", "HO", "ER", "TM", "YB",
+    "LU", "U", "TH",
+    # Halides & Simple Anions
+    "CL", "BR", "I", "F",  
+    # Common Physiological / Buffer Counter-Ions
+    "SO4", "PO4", "NO3", "NH4", "ACT"
+})
 REPRESENTATIVE_ATOMS = {MOIETY_PROTEIN: ("CA",), MOIETY_NUCLEIC: ("C4'", "C1'", "P")}
 BACKBONE_ATOMS = frozenset({"N", "CA", "C", "O", "OXT"})
+KEY_MODES = ("auth", "label")
 
 GLOBAL_MATCH_SCORE = 2.0
 GLOBAL_MISMATCH_SCORE = -1.0
@@ -74,3 +91,4 @@ INTERFACE_RESIDUE_COLUMNS = [
 HYDRO = {"A": 0.62, "R": -2.53, "N": -0.78, "D": -0.90, "C": 0.29, "Q": -0.85, "E": -0.74, "G": 0.48, "H": -0.40, "I": 1.38, "L": 1.06, "K": -1.50, "M": 0.64, "F": 1.19, "P": 0.12, "S": -0.18, "T": -0.05, "W": 0.81, "Y": 0.26, "V": 1.08}
 TO1 = {k.upper(): v for k, v in protein_letters_3to1_extended.items()}
 TIEN = {"ALA": 129, "ARG": 274, "ASN": 195, "ASP": 193, "CYS": 167, "GLN": 225, "GLU": 223, "GLY": 104, "HIS": 224, "ILE": 197, "LEU": 201, "LYS": 236, "MET": 224, "PHE": 240, "PRO": 159, "SER": 155, "THR": 172, "TRP": 285, "TYR": 263, "VAL": 174}
+

@@ -16,7 +16,6 @@ from IPython.display import HTML
 
 from helpers import finish_log
 
-SEED = 42
 VIZ_SIZE_PX = 400
 VIZ_BACKGROUND = "white"
 VIZ_STYLES = ("cartoon", "stick", "sphere", "line")

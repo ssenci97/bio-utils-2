@@ -9,7 +9,7 @@ import itertools
 import numpy as np
 import pandas as pd
 
-from constants import DEFAULT_CONTACT_MOIETIES, DEFAULT_CUTOFF, REPRESENTATIVE_ATOMS
+from constants import DEFAULT_CONTACT_MOIETIES, CONTACTS_CUTOFF_nm, REPRESENTATIVE_ATOMS
 from helpers import clean_sequence, is_protein_residue, residue_moiety, residue_to_letter
 
 ###################################### CHAIN MANAGEMENT
@@ -203,7 +203,7 @@ class ChainMixin:
         """Rebuild the mapping of one chain against its current reference and return self."""
         chain_id = self._require_chain(chain_id)
         data = self.chains[chain_id]
-        print(f"remapped {chain_id}")
+        print(f"[PYTHON-INFO] remapped {chain_id}")
         return self.set_reference_sequence(chain_id, data["reference_sequence"], remap=True)
 
     def remap_all_chains(self):
@@ -435,7 +435,7 @@ class ChainMixin:
                 coords[key] = np.asarray(points, dtype=np.float64) / 10.0
         return coords
 
-    def _chain_contact_partners(self, cutoff=DEFAULT_CUTOFF):
+    def chain_contact_partners(self, cutoff=CONTACTS_CUTOFF_nm):
         """Return {chain_key: sorted chain_keys in contact} from inter-chain representative-atom distances.
 
         Args:

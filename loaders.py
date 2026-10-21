@@ -11,10 +11,8 @@ from pathlib import Path
 from Bio.PDB import MMCIFParser, PDBParser
 from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 
-from constants import DEFAULT_CONFIG_PATH, RCSB_URL, SUPPORTED_SUFFIXES
+from constants import DEFAULT_CONFIG_PATH, RCSB_URL, SUPPORTED_SUFFIXES, KEY_MODES
 from helpers import finish_log
-
-KEY_MODES = ("auth", "label")
 
 ###################################### LOADERS
 
