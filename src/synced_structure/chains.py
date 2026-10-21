@@ -178,7 +178,7 @@ class ChainMixin:
             chain_id: Chain identifier, standard or author.
         """
         data = self.chains[self._require_chain(chain_id)]
-        return data["refseq_id"] or self.get_external_ref(chain_id)
+        return data.get("refseq_id") or self.get_external_ref(chain_id)
 
     def set_refseq_id(self, chain_id, refseq_id):
         """Set the ID of a chain's reference sequence, which may differ from its external reference, and return self.
