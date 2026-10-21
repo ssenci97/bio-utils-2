@@ -48,23 +48,29 @@ def query_coverage(aligned, query_length):
 
 
 class AlignmentMixin:
-    def _local_alignment(self, chain_id):
-        """Return cached (stats, position_rows) for a chain, recomputing if sequences changed."""
-        reference = self.get_reference_sequence(chain_id)
-        observed = self.get_sequence(chain_id)
+    """Local alignments of observed chain sequences against their reference sequences."""
+
+    def _local_alignment(self, chain_key):
+        """Return cached (stats, position_rows) for a chain, recomputing if sequences changed.
+
+        Args:
+            chain_key: Chain key as held by the structure.
+        """
+        reference = self.get_reference_sequence(chain_key)
+        observed = self.get_sequence(chain_key)
         key = (reference, observed)
-        cached = self._alignment_cache.get(chain_id)
+        cached = self._alignment_cache.get(chain_key)
         if cached and cached[0] == key:
             return cached[1]
-        result = self._compute_local_alignment(chain_id, reference, observed)
-        self._alignment_cache[chain_id] = (key, result)
+        result = self._compute_local_alignment(chain_key, reference, observed)
+        self._alignment_cache[chain_key] = (key, result)
         return result
 
-    def _compute_local_alignment(self, chain_id, reference, observed):
+    def _compute_local_alignment(self, chain_key, reference, observed):
         """Compute a local alignment and return (stats, position_rows) with 1-based positions.
 
         Args:
-            chain_id: Chain key.
+            chain_key: Chain key.
             reference: Reference sequence.
             observed: Observed sequence.
         """
@@ -73,26 +79,42 @@ class AlignmentMixin:
         alignments = self._local_aligner.align(reference, observed)
         if not alignments:
             return None, []
-        data = self.chains[chain_id]
-        label, auth = data["chain_id"], data["auth_chain_id"]
-        best = alignments[0]
-        ref_aligned, obs_aligned = best
-        ref_start, obs_start = int(best.coordinates[0, 0]), int(best.coordinates[1, 0])
-        ref_end, obs_end = int(best.coordinates[0, -1]), int(best.coordinates[1, -1])
+        record = self.chains[chain_key]
+        label, auth = record.chain_id, record.auth_chain_id
+        ref_aligned, obs_aligned = alignments[0]
+        coordinates = alignments[0].coordinates
+        ref_start, obs_start = int(coordinates[0, 0]), int(coordinates[1, 0])
+        ref_end, obs_end = int(coordinates[0, -1]), int(coordinates[1, -1])
+        rows, counts, gap_positions = self._alignment_columns(label, auth, ref_aligned, obs_aligned, ref_start, obs_start)
+        stats = self._alignment_stats(label, auth, reference, observed, counts, gap_positions,
+                                      (ref_start, ref_end), obs_end, obs_start)
+        return stats, rows
+
+    def _alignment_columns(self, label, auth, ref_aligned, obs_aligned, ref_start, obs_start):
+        """Return (position_rows, counts, gap_positions) for the aligned columns of two sequences.
+
+        Args:
+            label: Standard chain ID.
+            auth: Author chain ID.
+            ref_aligned: Gapped reference string of the alignment.
+            obs_aligned: Gapped observed string of the alignment.
+            ref_start: 0-based start of the aligned reference region.
+            obs_start: 0-based start of the aligned observed region.
+        """
         counts = {"matches": 0, "mismatches": 0, "insertions": 0, "deletions": 0}
         gap_positions, rows = [], []
         ref_pos, obs_pos = ref_start, obs_start
-        for column, (r, o) in enumerate(zip(ref_aligned, obs_aligned), start=1):
-            if r != "-":
+        for column, (ref_char, obs_char) in enumerate(zip(ref_aligned, obs_aligned), start=1):
+            if ref_char != "-":
                 ref_pos += 1
-            if o != "-":
+            if obs_char != "-":
                 obs_pos += 1
-            if r == "-":
+            if ref_char == "-":
                 counts["insertions"] += 1
-            elif o == "-":
+            elif obs_char == "-":
                 counts["deletions"] += 1
                 gap_positions.append(str(obs_pos))
-            elif r == o:
+            elif ref_char == obs_char:
                 counts["matches"] += 1
             else:
                 counts["mismatches"] += 1
@@ -101,16 +123,36 @@ class AlignmentMixin:
                 "chain_id": label,
                 "auth_chain_id": auth,
                 "alignment_position": column,
-                "ref": r,
-                "alt": o,
-                "posref": ref_pos if r != "-" else None,
-                "posalt": obs_pos if o != "-" else None,
-                "match": int(r == o and r != "-"),
+                "ref": ref_char,
+                "alt": obs_char,
+                "posref": ref_pos if ref_char != "-" else None,
+                "posalt": obs_pos if obs_char != "-" else None,
+                "match": int(ref_char == obs_char and ref_char != "-"),
             })
+        return rows, counts, gap_positions
+
+    def _alignment_stats(self, label, auth, reference, observed, counts, gap_positions, ref_span, obs_end, obs_start):
+        """Return the one-row summary of a local alignment.
+
+        identity_percent divides matches by all alignment columns, gaps included. query_coverage_percent
+        divides matched and mismatched residues by the observed length.
+
+        Args:
+            label: Standard chain ID.
+            auth: Author chain ID.
+            reference: Reference sequence.
+            observed: Observed sequence.
+            counts: Dict with matches, mismatches, insertions, and deletions.
+            gap_positions: 1-based observed positions of deletions in the query.
+            ref_span: (start, end) 0-based reference positions of the aligned region.
+            obs_end: 0-based end of the aligned observed region.
+            obs_start: 0-based start of the aligned observed region.
+        """
+        ref_start, ref_end = ref_span
         matches, mismatches = counts["matches"], counts["mismatches"]
         insertions, deletions = counts["insertions"], counts["deletions"]
         aligned_length = sum(counts.values())
-        stats = {
+        return {
             "structure_id": self.structure_id,
             "chain_id": label,
             "auth_chain_id": auth,
@@ -133,7 +175,6 @@ class AlignmentMixin:
             "gappos": ",".join(gap_positions),
             "sequence": reference[ref_start:ref_end],
         }
-        return stats, rows
 
 ###################################### EXPOSED ALIGNMENT FRAMES
 

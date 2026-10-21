@@ -4,7 +4,7 @@
 
 import re
 
-from .constants import MOIETY_NUCLEIC, MOIETY_PROTEIN, NUCLEIC_TO1, TO1
+from .constants import MOIETY_NUCLEIC, MOIETY_PROTEIN, NUCLEIC_TO1, PROTEIN_3TO1
 
 ###################################### SEQUENCE HELPERS
 
@@ -25,9 +25,9 @@ def residue_to_letter(residue, moiety):
 
     Args:
         residue: Biopython Residue.
-        moiety: Biomolecule type from residue_moiety.
+        moiety: Biomolecule type from residue_class.
     """
-    table = {MOIETY_PROTEIN: TO1, MOIETY_NUCLEIC: NUCLEIC_TO1}.get(moiety, {})
+    table = {MOIETY_PROTEIN: PROTEIN_3TO1, MOIETY_NUCLEIC: NUCLEIC_TO1}.get(moiety, {})
     return table.get(residue.get_resname().strip().upper(), "X")
 
 ###################################### MMCIF FIELDS

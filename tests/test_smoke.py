@@ -50,7 +50,7 @@ def test_contacts_and_strings(sync, tmp_path):
 def test_matrices_and_statistics(sync):
     pair = sync.contact_matrix("A", "B", scheme="sidechain")
     assert pair["matrix"].shape == (85, 11)
-    block = sync.complete_contacts("A", "B")
+    block = sync.block_contact_matrix("A", "B")
     assert block["inter"].any()
     stats = sync.contact_statistics()
     assert {"pairs", "profile", "separation", "moiety_pairs"} == set(stats)
@@ -71,7 +71,7 @@ def test_reference_numbering_keeps_hetero(sync):
     after = sync.moiety_summary
     hetero = ["ion", "water"]
     assert before[before["moiety"].isin(hetero)].equals(after[after["moiety"].isin(hetero)])
-    assert sync["A"]["residues"][0].id[1] == 3
+    assert sync["A"].residues[0].id[1] == 3
 
 
 def test_plots_and_exports(sync, tmp_path):
@@ -91,7 +91,7 @@ def test_plots_and_exports(sync, tmp_path):
 
 
 def test_viz_and_config(sync, tmp_path):
-    views = [sync.jupy_viz(title="all"), sync.jupy_viz(style="stick")]
+    views = [sync.show_structure_3d(title="all"), sync.show_structure_3d(style="stick")]
     assert views[0].data != views[1].data
     assert "<div" in side_by_side(*views).data
     config = tmp_path / "config.yaml"

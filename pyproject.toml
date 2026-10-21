@@ -28,3 +28,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["network: tests that call live RCSB services (run with: pytest -m network)"]
+addopts = "-m 'not network'"

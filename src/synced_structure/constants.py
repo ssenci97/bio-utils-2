@@ -8,6 +8,9 @@ from Bio.PDB.Polypeptide import protein_letters_3to1_extended
 RCSB_URL = "https://files.rcsb.org/download/{}.cif"
 RCSB_SEARCH_URL = "https://search.rcsb.org/rcsbsearch/v2/query"
 RCSB_GRAPHQL_URL = "https://data.rcsb.org/graphql"
+RCSB_RESOLUTION_MIN_DEFAULT = 0.0
+RCSB_RESOLUTION_MAX_DEFAULT = 100.0
+RCSB_COUNT_MAX_DEFAULT = 9999
 RCSB_RETURN_TYPES = ("entry", "assembly", "polymer_entity", "non_polymer_entity", "polymer_instance", "mol_definition")
 PUB_COLUMNS = [
     "pdb_id", "citation_id", "is_primary", "title", "authors", "journal", "volume",
@@ -16,8 +19,9 @@ PUB_COLUMNS = [
 CONTACTS_CUTOFF_NM = 0.8
 DEFAULT_CONTACT_TYPE = "inter"
 CONTACT_TYPES = ("inter", "intra", "all")
-CONTACT_SCHEMES = ("ca", "sidechain")
-DEFAULT_CONFIG_PATH = None
+# MDTraj scheme name for each contact scheme
+MD_SCHEMES = {"ca": "ca", "sidechain": "closest-heavy"}
+CONTACT_SCHEMES = tuple(MD_SCHEMES)
 CONFIG_SECTION = "synced_structure"
 DEFAULT_CONFIG = {
     "save_outdir": "data/saved",
@@ -29,6 +33,9 @@ DEFAULT_CONFIG = {
     "interface_score_cutoff_a": 12.0,
     "interface_block_size": 1000,
 }
+# Categorical palette for chains, chain pairs, and contacts across the package
+PALETTE = ["#ECDE90", "#93DEB6", "#F1B584", "#76BBE2", "#DA919B",
+           "#899E64", "#8E81B9", "#A66C58", "#30767A", "#7A5271"]
 SUPPORTED_SUFFIXES = {".pdb", ".cif", ".mmcif"}
 EXPORT_SUFFIX = ".csv"
 KEY_MODES = ("auth", "label")
@@ -43,9 +50,9 @@ POLYMER_MOIETIES = (MOIETY_PROTEIN, MOIETY_NUCLEIC)
 DEFAULT_CONTACT_MOIETIES = POLYMER_MOIETIES
 
 ### token dictionaries
-TO1 = {k.strip().upper(): v for k, v in protein_letters_3to1_extended.items()}
+PROTEIN_3TO1 = {k.strip().upper(): v for k, v in protein_letters_3to1_extended.items()}
 NUCLEIC_TO1 = {k.strip().upper(): v for k, v in nucleic_letters_3to1_extended.items()}
-PROTEIN_RESNAMES = frozenset(TO1)
+PROTEIN_RESNAMES = frozenset(PROTEIN_3TO1)
 NUCLEIC_RESNAMES = frozenset(NUCLEIC_TO1)
 WATER_RESNAMES = frozenset({"HOH", "WAT", "DOD", "H2O"})
 ION_RESNAMES = frozenset({
@@ -65,6 +72,10 @@ ION_RESNAMES = frozenset({
 })
 REPRESENTATIVE_ATOMS = {MOIETY_PROTEIN: ("CA",), MOIETY_NUCLEIC: ("C4'", "C1'", "P")}
 BACKBONE_ATOMS = frozenset({"N", "CA", "C", "O", "OXT"})
+
+ANGSTROM_PER_NM = 10.0
+COORD_BLOCK_ROWS = 256
+INTERFACE_ENERGY_PREFACTOR = -0.5
 
 GLOBAL_MATCH_SCORE = 2.0
 GLOBAL_MISMATCH_SCORE = -1.0
@@ -112,5 +123,7 @@ PROFILE_COLUMNS = [
 SEPARATION_COLUMNS = ["chain_id", "separation", "min_distance_nm"]
 MOIETY_PAIR_COLUMNS = ["moiety_pair", "contact_pairs", "median_nm", "mean_nm"]
 COMPLETE_MIN_SEPARATION = 2
-HYDRO = {"A": 0.62, "R": -2.53, "N": -0.78, "D": -0.90, "C": 0.29, "Q": -0.85, "E": -0.74, "G": 0.48, "H": -0.40, "I": 1.38, "L": 1.06, "K": -1.50, "M": 0.64, "F": 1.19, "P": 0.12, "S": -0.18, "T": -0.05, "W": 0.81, "Y": 0.26, "V": 1.08}
-TIEN = {"ALA": 129, "ARG": 274, "ASN": 195, "ASP": 193, "CYS": 167, "GLN": 225, "GLU": 223, "GLY": 104, "HIS": 224, "ILE": 197, "LEU": 201, "LYS": 236, "MET": 224, "PHE": 240, "PRO": 159, "SER": 155, "THR": 172, "TRP": 285, "TYR": 263, "VAL": 174}
+# Kyte-Doolittle hydropathy per one-letter residue code
+KYTE_DOOLITTLE_HYDROPATHY = {"A": 0.62, "R": -2.53, "N": -0.78, "D": -0.90, "C": 0.29, "Q": -0.85, "E": -0.74, "G": 0.48, "H": -0.40, "I": 1.38, "L": 1.06, "K": -1.50, "M": 0.64, "F": 1.19, "P": 0.12, "S": -0.18, "T": -0.05, "W": 0.81, "Y": 0.26, "V": 1.08}
+# Tien et al. maximum accessible surface area in A^2 per three-letter residue name
+TIEN_MAX_ASA = {"ALA": 129, "ARG": 274, "ASN": 195, "ASP": 193, "CYS": 167, "GLN": 225, "GLU": 223, "GLY": 104, "HIS": 224, "ILE": 197, "LEU": 201, "LYS": 236, "MET": 224, "PHE": 240, "PRO": 159, "SER": 155, "THR": 172, "TRP": 285, "TYR": 263, "VAL": 174}

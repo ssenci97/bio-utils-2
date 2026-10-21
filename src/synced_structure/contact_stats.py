@@ -13,7 +13,7 @@ from .constants import (
 )
 
 
-def _residue_id(index, resnum, resname):
+def _residue_token(index, resnum, resname):
     """Return a residue identifier: the sequence index for polymer residues, (resnum, resname) for hetero ones."""
     return ("hetero", int(resnum), resname) if pd.isna(index) else int(index)
 
@@ -21,13 +21,15 @@ def _residue_id(index, resnum, resname):
 def _contact_sides(contacts):
     """Yield (label, residue_id, distance) for both residues of every contact row."""
     for row in contacts.itertuples(index=False):
-        yield row.chain_1, _residue_id(row.sequence_index_1, row.resnum_1, row.resname_1), row.min_distance_nm
-        yield row.chain_2, _residue_id(row.sequence_index_2, row.resnum_2, row.resname_2), row.min_distance_nm
+        yield row.chain_1, _residue_token(row.sequence_index_1, row.resnum_1, row.resname_1), row.min_distance_nm
+        yield row.chain_2, _residue_token(row.sequence_index_2, row.resnum_2, row.resname_2), row.min_distance_nm
 
 ###################################### STATISTICS
 
 
 class ContactStatsMixin:
+    """Contact statistics per chain pair, per contact-point residue, per sequence separation, and per moiety pair."""
+
     def _pair_statistics(self, contacts, moieties):
         """Return one row per chain pair (or chain, for intra-chain contacts) with counts, coverage, density, and distances.
 
@@ -44,24 +46,24 @@ class ContactStatsMixin:
         rows = []
         for label_a, label_b in pairs:
             same = label_a == label_b
-            sub = self._pair_rows(contacts, label_a, label_b)
-            seen = {}
-            for label, residue, _ in _contact_sides(sub):
-                seen.setdefault(label, set()).add(residue)
-            seen_a, seen_b = seen.get(label_a, set()), seen.get(label_b, set())
+            pair_rows = self._pair_rows(contacts, label_a, label_b)
+            contacted_by_chain = {}
+            for label, residue, _ in _contact_sides(pair_rows):
+                contacted_by_chain.setdefault(label, set()).add(residue)
+            seen_a, seen_b = contacted_by_chain.get(label_a, set()), contacted_by_chain.get(label_b, set())
             n_a, n_b = n_points[label_a], n_points[label_b]
             possible = n_a * (n_a - 1) / 2 if same else n_a * n_b
-            distances = sub["min_distance_nm"]
+            distances = pair_rows["min_distance_nm"]
             rows.append({
                 "chain_a": label_a,
                 "chain_b": label_b,
                 "contact_type": "intra" if same else "inter",
-                "contact_pairs": len(sub),
+                "contact_pairs": len(pair_rows),
                 "contacted_a": len(seen_a),
                 "contacted_b": len(seen_b),
                 "fraction_a": len(seen_a) / n_a if n_a else np.nan,
                 "fraction_b": len(seen_b) / n_b if n_b else np.nan,
-                "contact_density": len(sub) / possible if possible else np.nan,
+                "contact_density": len(pair_rows) / possible if possible else np.nan,
                 "min_nm": round(float(distances.min()), 4),
                 "median_nm": round(float(distances.median()), 4),
                 "mean_nm": round(float(distances.mean()), 4),
@@ -84,7 +86,7 @@ class ContactStatsMixin:
         for record in self._contact_records(chain_keys, moieties):
             index = record["sequence_index"]
             number = None if index is None else index + 1
-            point = (record["chain_id"], _residue_id(np.nan if index is None else number, record["resnum"], record["resname"]))
+            point = (record["chain_id"], _residue_token(np.nan if index is None else number, record["resnum"], record["resname"]))
             rows.append({
                 "structure_id": self.structure_id,
                 "chain_id": record["chain_id"],

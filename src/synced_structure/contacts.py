@@ -9,12 +9,10 @@ import numpy as np
 import pandas as pd
 
 from .constants import (
-    BACKBONE_ATOMS, CONTACT_COLUMNS, CONTACT_SCHEMES, CONTACT_SEQUENCE_COLUMNS, CONTACT_TYPES,
-    CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, DEFAULT_CONTACT_TYPE, MOIETIES, MOIETY_PROTEIN,
+    ANGSTROM_PER_NM, BACKBONE_ATOMS, CONTACT_COLUMNS, CONTACT_SCHEMES, CONTACT_SEQUENCE_COLUMNS, CONTACT_TYPES,
+    CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, DEFAULT_CONTACT_TYPE, MD_SCHEMES, MOIETIES, MOIETY_PROTEIN,
 )
 from .residues import is_heavy, representative_coord
-
-MD_SCHEMES = {"ca": "ca", "sidechain": "closest-heavy"}
 
 ###################################### CONTACT ARGUMENTS
 
@@ -41,6 +39,8 @@ def _pair_mask(same_chain, contact_type):
 
 
 class ContactMixin:
+    """Contact points, contact detection with MDTraj, and contact strings."""
+
     def _contact_records(self, chain_ids=None, moieties=DEFAULT_CONTACT_MOIETIES):
         """Return one record per residue of the given moieties that has a contact point.
 
@@ -57,14 +57,14 @@ class ContactMixin:
             if selected is not None and key not in selected:
                 continue
             residues = [(index, residue, moiety)
-                        for index, (residue, moiety) in enumerate(zip(data["residues"], data["moieties"]))]
-            residues += [(None, residue, moiety) for residue, moiety in data["hetero"]]
+                        for index, (residue, moiety) in enumerate(zip(data.residues, data.moieties))]
+            residues += [(None, residue, moiety) for residue, moiety in data.hetero]
             for index, residue, moiety in residues:
                 if moiety not in moieties:
                     continue
                 point = representative_coord(residue, moiety)
                 if point is not None:
-                    records.append({"key": key, "chain_id": data["chain_id"], "auth_chain_id": data["auth_chain_id"],
+                    records.append({"key": key, "chain_id": data.chain_id, "auth_chain_id": data.auth_chain_id,
                                     "sequence_index": index, "resnum": int(residue.id[1]),
                                     "resname": residue.resname.strip().upper(), "moiety": moiety,
                                     "residue": residue, "point": point})
@@ -102,7 +102,7 @@ class ContactMixin:
             else:
                 topology.add_atom("CA" if scheme == "ca" else "CP", md.element.carbon, md_residue)
                 coordinates.append(record["point"])
-        xyz = np.asarray(coordinates, dtype=np.float32)[None, :, :] / 10.0
+        xyz = np.asarray(coordinates, dtype=np.float32)[None, :, :] / ANGSTROM_PER_NM
         return md.Trajectory(xyz=xyz, topology=topology)
 
     def to_ca_trajectory(self, chain_ids=None, moieties=DEFAULT_CONTACT_MOIETIES):
@@ -169,9 +169,9 @@ class ContactMixin:
 
     def _string_indices(self, chain_id, moieties=DEFAULT_CONTACT_MOIETIES):
         """Return 0-based sequence indices of a chain's polymer residues whose moiety is in moieties."""
-        return [index for index, moiety in enumerate(self.chains[chain_id]["moieties"]) if moiety in moieties]
+        return [index for index, moiety in enumerate(self.chains[chain_id].moieties) if moiety in moieties]
 
-    def _observed_bits(self, chain_id, cutoff, contact_type, contacts, scheme, moieties):
+    def _contact_bits(self, chain_id, cutoff, contact_type, contacts, scheme, moieties):
         """Return one bit per polymer residue of a chain: X (no contact point), 0, or 1.
 
         Args:
@@ -182,10 +182,10 @@ class ContactMixin:
             scheme: Contact scheme, used if contacts is None.
             moieties: Biomolecule types, used if contacts is None.
         """
-        label = self.chains[chain_id]["chain_id"]
+        label = self.chains[chain_id].chain_id
         if contacts is None:
             contacts = self.compute_contacts(cutoff=cutoff, contact_type=contact_type, scheme=scheme, moieties=moieties)
-        bits = ["X"] * self.chains[chain_id]["sequence_length"]
+        bits = ["X"] * self.chains[chain_id].sequence_length
         for record in self._contact_records([chain_id], moieties):
             if record["sequence_index"] is not None:
                 bits[record["sequence_index"]] = "0"
@@ -210,7 +210,7 @@ class ContactMixin:
             moieties: Biomolecule types included in the string.
         """
         chain_id = self._require_chain(chain_id)
-        bits = self._observed_bits(chain_id, cutoff, contact_type, contacts, scheme, moieties)
+        bits = self._contact_bits(chain_id, cutoff, contact_type, contacts, scheme, moieties)
         return "".join(bits[index] for index in self._string_indices(chain_id, moieties))
 
     def get_reference_contact_sequence(self, chain_id, cutoff=CONTACTS_CUTOFF_NM, contact_type=DEFAULT_CONTACT_TYPE,
@@ -230,13 +230,13 @@ class ContactMixin:
         """
         chain_id = self._require_chain(chain_id)
         data = self.chains[chain_id]
-        reference = data["reference_sequence"]
+        reference = data.reference_sequence
         if not reference:
-            raise ValueError(f"Chain {data['chain_id']} has no reference sequence. Set one with set_reference_sequence() first.")
-        observed = self._observed_bits(chain_id, cutoff, contact_type, contacts, scheme, moieties)
+            raise ValueError(f"Chain {data.chain_id} has no reference sequence. Set one with set_reference_sequence() first.")
+        observed = self._contact_bits(chain_id, cutoff, contact_type, contacts, scheme, moieties)
         kept = set(self._string_indices(chain_id, moieties))
         bits = ["X"] * len(reference)
-        for seq_index, ref_index in data["sequence_index_to_ref_index"].items():
+        for seq_index, ref_index in data.sequence_index_to_ref_index.items():
             if seq_index in kept and 0 <= ref_index < len(bits):
                 bits[ref_index] = "1" if observed[seq_index] == "1" else "0"
         return "".join(bits)
@@ -259,17 +259,17 @@ class ContactMixin:
         rows = []
         for chain_key, data in self.chains.items():
             if reference:
-                if not data["reference_sequence"]:
+                if not data.reference_sequence:
                     continue
-                sequence = data["reference_sequence"]
+                sequence = data.reference_sequence
                 contact_string = self.get_reference_contact_sequence(chain_key, **options)
             else:
-                sequence = "".join(data["sequence"][index] for index in self._string_indices(chain_key, moieties))
+                sequence = "".join(data.sequence[index] for index in self._string_indices(chain_key, moieties))
                 contact_string = self.get_contact_sequence(chain_key, **options)
             rows.append({
                 "structure_id": self.structure_id,
-                "chain_id": data["chain_id"],
-                "auth_chain_id": data["auth_chain_id"],
+                "chain_id": data.chain_id,
+                "auth_chain_id": data.auth_chain_id,
                 "sequence": sequence,
                 "contacts": contact_string,
                 "contact_type": contact_type,

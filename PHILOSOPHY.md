@@ -21,8 +21,8 @@ The design is a single class assembled from focused mixins (loading, chains, ali
 
 ```python
 SyncedStructure(structure, structure_id="structure", mmcif_dict=None, file_format="cif",
-                config_path=DEFAULT_CONFIG_PATH, default_entity_id=None, key_by="auth")
-SyncedStructure.from_rcsb_id(pdb_id, config_path=..., key_by="auth")
+                config_path=None, default_entity_id=None, key_by="auth")
+SyncedStructure.from_rcsb(pdb_id, config_path=..., key_by="auth")
 SyncedStructure.from_path(path, config_path=..., key_by="auth")
 SyncedStructure.from_biopython(structure, structure_id=None, mmcif_dict=None, file_format="pdb",
                                config_path=..., key_by="auth")
@@ -71,7 +71,7 @@ compute_contacts(cutoff=..., contact_type=..., chain_ids=None, scheme="ca", moie
 get_contact_sequence(chain_id, ...) / get_reference_contact_sequence(chain_id, ...)
 export_contact_sequences(output_path, ..., reference=False, ...)
 contact_matrix(chain_a="A", chain_b=None, cutoff=..., moieties=..., scheme="ca")
-complete_contacts(chain_a="A", chain_b="B", ..., min_separation=...)
+block_contact_matrix(chain_a="A", chain_b="B", ..., min_separation=...)
 contact_statistics(cutoff=..., moieties=..., scheme="ca")
 ```
 

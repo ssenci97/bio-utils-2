@@ -11,10 +11,11 @@ from Bio.PDB.SASA import ShrakeRupley
 from tqdm import tqdm
 
 from .constants import (
-    CONTACTS_CUTOFF_NM, HYDRO, INTERFACE_COMPLEX_COLUMNS, INTERFACE_RESIDUE_COLUMNS, POLYMER_MOIETIES, TIEN, TO1,
+    CONTACTS_CUTOFF_NM, INTERFACE_COMPLEX_COLUMNS, INTERFACE_ENERGY_PREFACTOR, INTERFACE_RESIDUE_COLUMNS,
+    KYTE_DOOLITTLE_HYDROPATHY, POLYMER_MOIETIES, PROTEIN_3TO1, TIEN_MAX_ASA,
 )
-from .residues import is_heavy, residue_moiety
-from .utils import log_info
+from .residues import is_heavy, residue_class
+from .utils import deprecated_method, log_info
 
 
 def split_partners(text):
@@ -25,6 +26,8 @@ def split_partners(text):
 
 
 class InterfaceMixin:
+    """Pairwise interface metrics: buried surface area, contacts, distances, energies, and partner tables."""
+
     @staticmethod
     def _heavy_atoms(residues):
         """Return heavy-atom coordinates and the residue index owning each atom.
@@ -50,7 +53,7 @@ class InterfaceMixin:
         model = Model(0)
         for chain in chains:
             copied = chain.copy()
-            for residue in [r for r in copied if residue_moiety(r) not in POLYMER_MOIETIES]:
+            for residue in [r for r in copied if residue_class(r) not in POLYMER_MOIETIES]:
                 copied.detach_child(residue.id)
             model.add(copied)
         ShrakeRupley().compute(model, level="R")
@@ -58,27 +61,27 @@ class InterfaceMixin:
 
     @staticmethod
     def _atom_contacts(xa, xb, cutoff, score_cutoff, block):
-        """Return contact count, score, minimum distance, and per-atom contact masks for two atom sets.
+        """Return contact count, score_sum, minimum distance, and per-atom contact masks for two atom sets.
 
         Args:
             xa: Coordinates of atoms in the first set.
             xb: Coordinates of atoms in the second set.
             cutoff: Contact distance cutoff in A.
-            score_cutoff: Distance cutoff in A for the inverse-distance score.
+            score_cutoff: Distance cutoff in A for the inverse-distance score_sum.
             block: Number of rows processed per block.
         """
-        n, score, dmin = 0, 0.0, np.inf
-        ha, hb = np.zeros(len(xa), bool), np.zeros(len(xb), bool)
+        n_contacts, score_sum, min_dist = 0, 0.0, np.inf
+        contact_mask_a, contact_mask_b = np.zeros(len(xa), bool), np.zeros(len(xb), bool)
         for start in range(0, len(xa), block):
-            d = np.linalg.norm(xa[start:start + block, None] - xb[None], axis=-1)
-            m = d <= cutoff
-            n += int(m.sum())
-            w = (d <= score_cutoff) & (d > 0)
-            score += float((1.0 / d[w]).sum())
-            dmin = min(dmin, float(d.min()))
-            ha[start:start + block] |= m.any(axis=1)
-            hb |= m.any(axis=0)
-        return n, score, dmin, ha, hb
+            dist = np.linalg.norm(xa[start:start + block, None] - xb[None], axis=-1)
+            within_cutoff = dist <= cutoff
+            n_contacts += int(within_cutoff.sum())
+            within_score = (dist <= score_cutoff) & (dist > 0)
+            score_sum += float((1.0 / dist[within_score]).sum())
+            min_dist = min(min_dist, float(dist.min()))
+            contact_mask_a[start:start + block] |= within_cutoff.any(axis=1)
+            contact_mask_b |= within_cutoff.any(axis=0)
+        return n_contacts, score_sum, min_dist, contact_mask_a, contact_mask_b
 
     @staticmethod
     def _residue_min_distances(xa, oa, xb, ob, na, nb, block):
@@ -106,7 +109,7 @@ class InterfaceMixin:
         Args:
             residue: Biopython Residue.
         """
-        return HYDRO.get(TO1.get(residue.get_resname().upper(), "X"), 0.0)
+        return KYTE_DOOLITTLE_HYDROPATHY.get(PROTEIN_3TO1.get(residue.get_resname().upper(), "X"), 0.0)
 
 ###################################### PER-CHAIN GEOMETRY
 
@@ -118,13 +121,13 @@ class InterfaceMixin:
         """
         key = ("geometry", chain_key)
         if key not in self._interface_cache:
-            chain = self.chains[chain_key]["chain"]
-            residues = self.chains[chain_key]["residues"]
+            chain = self.chains[chain_key].chain
+            residues = self.chains[chain_key].residues
             xyz, owner = self._heavy_atoms(residues)
             sasa = self._residue_sasa([chain])
             self._interface_cache[key] = {
                 "id": chain.id,
-                "chain_id": self.chains[chain_key]["chain_id"],
+                "chain_id": self.chains[chain_key].chain_id,
                 "residues": residues,
                 "xyz": xyz,
                 "owner": owner,
@@ -146,67 +149,88 @@ class InterfaceMixin:
         cutoff = self.config["interface_contact_cutoff_a"]
         score_cutoff = self.config["interface_score_cutoff_a"]
         block = self.config["interface_block_size"]
-        ga, gb = self._chain_geometry(chain_a), self._chain_geometry(chain_b)
-        if not len(ga["xyz"]) or not len(gb["xyz"]):
+        geom_a, geom_b = self._chain_geometry(chain_a), self._chain_geometry(chain_b)
+        if not len(geom_a["xyz"]) or not len(geom_b["xyz"]):
             raise ValueError(f"No heavy atoms in chain {chain_a} or {chain_b}.")
-        cpx = self._residue_sasa([self.chains[chain_a]["chain"], self.chains[chain_b]["chain"]])
-        initial = ga["total_sasa"] + gb["total_sasa"]
-        dasa = initial - sum(cpx.values())
-        n, score, dmin_c, ha, hb = self._atom_contacts(ga["xyz"], gb["xyz"], cutoff, score_cutoff, block)
-        dmin = self._residue_min_distances(ga["xyz"], ga["owner"], gb["xyz"], gb["owner"],
-                                           len(ga["residues"]), len(gb["residues"]), block)
+        complex_sasa = self._residue_sasa([self.chains[chain_a].chain, self.chains[chain_b].chain])
+        initial = geom_a["total_sasa"] + geom_b["total_sasa"]
+        dasa = initial - sum(complex_sasa.values())
+        n_contacts, score, min_dist, contact_mask_a, contact_mask_b = self._atom_contacts(
+            geom_a["xyz"], geom_b["xyz"], cutoff, score_cutoff, block)
+        dmin = self._residue_min_distances(geom_a["xyz"], geom_a["owner"], geom_b["xyz"], geom_b["owner"],
+                                           len(geom_a["residues"]), len(geom_b["residues"]), block)
         contact = dmin <= cutoff
         mask = dmin <= score_cutoff
         with np.errstate(invalid="ignore", divide="ignore"):
-            energy = np.where(mask, -0.5 * (ga["hydro"][:, None] + gb["hydro"][None]) * (1 - dmin / score_cutoff), 0.0)
-        pair = f"{ga['chain_id']}-{gb['chain_id']}"
+            energy = np.where(mask, INTERFACE_ENERGY_PREFACTOR * (geom_a["hydro"][:, None] + geom_b["hydro"][None])
+                              * (1 - dmin / score_cutoff), 0.0)
+        pair = f"{geom_a['chain_id']}-{geom_b['chain_id']}"
         complex_row = {
             "structure": self.structure_id,
-            "chain_a": ga["chain_id"], "auth_chain_a": self.chains[chain_a]["auth_chain_id"],
-            "chain_b": gb["chain_id"], "auth_chain_b": self.chains[chain_b]["auth_chain_id"],
-            "len_res_a": len(ga["residues"]), "len_res_b": len(gb["residues"]),
-            "len_atoms_a": len(ga["xyz"]), "len_atoms_b": len(gb["xyz"]),
-            "dASA_A2": round(dasa, 2),
+            "chain_a": geom_a["chain_id"], "auth_chain_a": self.chains[chain_a].auth_chain_id,
+            "chain_b": geom_b["chain_id"], "auth_chain_b": self.chains[chain_b].auth_chain_id,
+            "len_res_a": len(geom_a["residues"]), "len_res_b": len(geom_b["residues"]),
+            "len_atoms_a": len(geom_a["xyz"]), "len_atoms_b": len(geom_b["xyz"]),
+            "dASA_A2": round(dasa, 2) + 0.0,  # + 0.0 turns a rounded -0.0 into 0.0
             "initial_sasa_A2": round(initial, 2),
-            "frac_dASA": round(dasa / initial, 4) if initial > 0 else 0.0,
-            "n_contacts": n,
-            "iface_res_a": int(np.unique(ga["owner"][ha]).size),
-            "iface_res_b": int(np.unique(gb["owner"][hb]).size),
-            "min_dist_A": round(dmin_c, 3),
+            "frac_dASA": round(dasa / initial, 4) + 0.0 if initial > 0 else 0.0,
+            "n_contacts": n_contacts,
+            "iface_res_a": int(np.unique(geom_a["owner"][contact_mask_a]).size),
+            "iface_res_b": int(np.unique(geom_b["owner"][contact_mask_b]).size),
+            "min_dist_A": round(min_dist, 3),
             "contact_score": round(score, 4),
         }
-        sides = (
-            (chain_a, ga, gb, energy.sum(axis=1), mask.sum(axis=1), contact.sum(axis=1), dmin.min(axis=1), contact),
-            (chain_b, gb, ga, energy.sum(axis=0), mask.sum(axis=0), contact.sum(axis=0), dmin.min(axis=0), contact.T),
+        rows = (
+            self._residue_rows(pair, chain_a, geom_a, geom_b, complex_sasa, energy.sum(axis=1), mask.sum(axis=1),
+                               contact.sum(axis=1), dmin.min(axis=1), contact)
+            + self._residue_rows(pair, chain_b, geom_b, geom_a, complex_sasa, energy.sum(axis=0), mask.sum(axis=0),
+                                 contact.sum(axis=0), dmin.min(axis=0), contact.T)
         )
-        rows = []
-        for cid, g, other, en_sum, nscore, npart, dm, pairs in sides:
-            for k, residue in enumerate(g["residues"]):
-                if not npart[k]:
-                    continue
-                key = (g["id"], residue.id)
-                dsasa = float(g["sasa"][key] - cpx[key])
-                maxa = TIEN.get(residue.get_resname().upper())
-                en = float(en_sum[k])
-                partners = [other["residues"][j] for j in np.flatnonzero(pairs[k])]
-                labels = ";".join(f"{other['chain_id']}{p.id[1]} {p.get_resname()}" for p in partners)
-                rows.append({
-                    "structure": self.structure_id,
-                    "pair": pair,
-                    "chain": g["chain_id"],
-                    "auth_chain": self.chains[cid]["auth_chain_id"],
-                    "resid": residue.id[1],
-                    "resname": residue.get_resname(),
-                    "dSASA_A2": round(dsasa, 2),
-                    "isolated_sasa_A2": round(float(g["sasa"][key]), 2),
-                    "rel_dSASA": round(dsasa / maxa, 4) if maxa else float("nan"),
-                    "n_partners": int(npart[k]),
-                    "min_dist_A": round(float(dm[k]), 3),
-                    "contact_energy": round(en, 4),
-                    "energy_per_partner": round(en / nscore[k], 4),
-                    "partners": labels,
-                })
         return {"complex": complex_row, "residues": pd.DataFrame(rows, columns=INTERFACE_RESIDUE_COLUMNS)}
+
+    def _residue_rows(self, pair, chain_key, geom, other, complex_sasa, energy_sum, n_in_score, n_partners,
+                      min_dists, partner_mask):
+        """Return one row per residue of one chain that has at least one partner within the contact cutoff.
+
+        Args:
+            pair: Pair label, such as 'A-B'.
+            chain_key: Chain key of this side.
+            geom: Cached geometry of this side.
+            other: Cached geometry of the partner side.
+            complex_sasa: {(chain_id, residue_id): SASA} of the complex.
+            energy_sum: Summed contact energy per residue of this side.
+            n_in_score: Number of partner atoms within the score cutoff per residue.
+            n_partners: Number of partner residues within the contact cutoff per residue.
+            min_dists: Minimum distance to any partner residue per residue, in A.
+            partner_mask: Boolean matrix (residues of this side by residues of the partner) of contacts.
+        """
+        rows = []
+        for index, residue in enumerate(geom["residues"]):
+            if not n_partners[index]:
+                continue
+            key = (geom["id"], residue.id)
+            dsasa = float(geom["sasa"][key] - complex_sasa[key])
+            max_asa = TIEN_MAX_ASA.get(residue.get_resname().upper())
+            energy = float(energy_sum[index])
+            partners = [other["residues"][j] for j in np.flatnonzero(partner_mask[index])]
+            labels = ";".join(f"{other['chain_id']}{p.id[1]} {p.get_resname()}" for p in partners)
+            rows.append({
+                "structure": self.structure_id,
+                "pair": pair,
+                "chain": geom["chain_id"],
+                "auth_chain": self.chains[chain_key].auth_chain_id,
+                "resid": residue.id[1],
+                "resname": residue.get_resname(),
+                "dSASA_A2": round(dsasa, 2) + 0.0,
+                "isolated_sasa_A2": round(float(geom["sasa"][key]), 2),
+                "rel_dSASA": round(dsasa / max_asa, 4) if max_asa else float("nan"),
+                "n_partners": int(n_partners[index]),
+                "min_dist_A": round(float(min_dists[index]), 3),
+                "contact_energy": round(energy, 4),
+                "energy_per_partner": round(energy / n_in_score[index], 4) if n_in_score[index] else float("nan"),
+                "partners": labels,
+            })
+        return rows
 
 ###################################### INTERFACE ACCESSORS
 
@@ -323,7 +347,7 @@ class InterfaceMixin:
         """Return the sum of inverse heavy-atom distances within the score cutoff."""
         return self.interface_complex(chain_a, chain_b)["contact_score"]
 
-    def partners(self, chain_a="A", chain_b="B"):
+    def interface_partner_labels(self, chain_a="A", chain_b="B"):
         """Return a dict mapping interface residue labels to their partner labels for one chain pair.
 
         Args:
@@ -335,3 +359,5 @@ class InterfaceMixin:
             f"{row.chain}{row.resid} {row.resname}": split_partners(row.partners)
             for row in frame.itertuples(index=False)
         }
+
+    partners = deprecated_method("partners", "interface_partner_labels")

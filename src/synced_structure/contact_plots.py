@@ -18,8 +18,8 @@ from .plot_style import (
     CONTACT_MAP_COLOR, CONTACT_MAP_DPI, CONTACT_MAP_MIN_MARKER_PT, CONTACT_MAP_N_TICKS, CONTACT_MAP_SIZE_IN,
     CONTACT_MAP_STYLES, CONTACT_MAP_TICK_STEP, CONTACT_MAP_VALUES, CONTACT_MULTI_SIZE_IN, CONTACT_PANEL_LINE_COLORS,
     CONTACT_PANEL_SIZE_IN, CONTACT_SUPTITLE_RATIO, CONTACT_TICK_BLOCK_RATIO, CONTACT_TICK_RATIO, CONTACT_TITLE_RATIO,
-    MULTI_BOX_COLOR, MULTI_BOX_LW, MULTI_INTRA_COLOR, MULTI_PAIR_COLORS, MULTI_TRACK_OFFSET, PLDDT_BANDS,
-    PLDDT_MISSING_COLOR,
+    COLORBAR_FRACTION, COLORBAR_PAD, MAP_FILL_FRACTION, MULTI_BOX_COLOR, MULTI_BOX_LW, MULTI_INTRA_COLOR,
+    MULTI_PAIR_COLORS, MULTI_TRACK_OFFSET, PLDDT_BAND_EDGES, PLDDT_BANDS, PLDDT_MISSING_COLOR, POINTS_PER_INCH,
 )
 
 ###################################### LAYOUT HELPERS
@@ -43,12 +43,12 @@ def _legend_offset(size_in, font_size, n_entries, ncol):
     """
     n_rows = math.ceil(n_entries / ncol)
     below_pt = font_size * (CONTACT_TICK_BLOCK_RATIO + CONTACT_AXIS_TITLE_RATIO + CONTACT_LEGEND_ROW_RATIO * n_rows)
-    return -below_pt / (size_in * 72 * 0.8)
+    return -below_pt / (size_in * POINTS_PER_INCH * MAP_FILL_FRACTION)
 
 
 def _marker_points(map_size_in, n_cols, n_rows, min_marker_pt):
     """Return the marker side in points so that one residue is at least min_marker_pt wide."""
-    return max(min_marker_pt, map_size_in * 72 * 0.8 / max(n_cols, n_rows, 1))
+    return max(min_marker_pt, map_size_in * POINTS_PER_INCH * MAP_FILL_FRACTION / max(n_cols, n_rows, 1))
 
 
 def _gray_limit(cutoff, gray_cutoff):
@@ -82,22 +82,71 @@ def _tick_positions(n, tick_step, n_ticks):
 def plddt_colors(values):
     """Return AlphaFold pLDDT band colors for per-residue values in 0 to 100, gray where a value is NaN."""
     values = np.asarray(values, dtype=float)
-    colors = np.where(values >= 90, PLDDT_BANDS[0][1],
-                      np.where(values >= 70, PLDDT_BANDS[1][1],
-                               np.where(values >= 50, PLDDT_BANDS[2][1], PLDDT_BANDS[3][1])))
+    high, mid, low = PLDDT_BAND_EDGES
+    colors = np.where(values >= high, PLDDT_BANDS[0][1],
+                      np.where(values >= mid, PLDDT_BANDS[1][1],
+                               np.where(values >= low, PLDDT_BANDS[2][1], PLDDT_BANDS[3][1])))
     return [PLDDT_MISSING_COLOR if np.isnan(v) else c for v, c in zip(values, colors)]
 
 ###################################### DRAWING HELPERS
 
 
+def _multi_masks(matrix, sizes, pairs, cutoff, min_separation):
+    """Return boolean masks over the block matrix of a multi-chain map.
+
+    Returns:
+        (gray, colored): gray marks every computed residue pair for the background. colored lists the intra-chain
+        mask first, then one inter-chain mask per entry of pairs, each limited to contacts within cutoff.
+    """
+    n_total = sum(sizes)
+    block_of = np.repeat(np.arange(len(sizes)), sizes)
+    pair_code = np.full((len(sizes), len(sizes)), -1)
+    for pair_idx, (i, j) in enumerate(pairs):
+        pair_code[i, j] = pair_code[j, i] = pair_idx
+    index = np.arange(n_total)
+    same_block = block_of[:, None] == block_of[None, :]
+    pair_index = pair_code[block_of[:, None], block_of[None, :]]
+    far_enough = np.abs(index[:, None] - index[None, :]) >= min_separation
+    close = matrix <= cutoff
+    gray = ~np.isnan(matrix) & (~same_block | far_enough)
+    intra_close = close & same_block & far_enough
+    inter_close = close & ~same_block
+    colored = [intra_close] + [inter_close & (pair_index == pair_idx) for pair_idx in range(len(pairs))]
+    return gray, colored
+
+
+def _multi_legend(ax, names, pairs, pair_colors, intra_color, plddt, size_in, font_size):
+    """Draw the legend of intra-chain, chain-pair, and optional pLDDT colors on a multi-chain map."""
+    handles = [Patch(facecolor=intra_color, label="intra-chain")]
+    handles += [Patch(facecolor=pair_colors[pair_idx], label=f"{names[i]}-{names[j]}")
+                for pair_idx, (i, j) in enumerate(pairs)]
+    if plddt:
+        handles += [Patch(facecolor=color, label=f"pLDDT {label}") for label, color in PLDDT_BANDS]
+    ax.legend(handles=handles, loc="upper center",
+              bbox_to_anchor=(0.5, _legend_offset(size_in, font_size, len(handles), 2)), ncol=2,
+              fontsize=font_size, frameon=False)
+
+
+def _draw_multi_boundaries(ax, offsets, sizes, n_total, box_color, box_lw):
+    """Draw dashed chain boundaries and a thin square around each chain of a multi-chain map."""
+    boundaries = offsets[1:] - 0.5
+    ax.hlines(boundaries, -0.5, n_total - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
+    ax.vlines(boundaries, -0.5, n_total - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
+    for start, length in zip(offsets, sizes):
+        ax.add_patch(Rectangle((start - 0.5, start - 0.5), length, length, fill=False,
+                               edgecolor=box_color, linewidth=box_lw, zorder=3))
+
+
 class ContactPlotMixin:
-    def _residue_plddt(self, chain_key):
+    """Contact maps, multi-chain block maps, and the 2x2 contact summary panel."""
+
+    def _residue_bfactor_as_plddt(self, chain_key):
         """Return per-residue pLDDT for a chain from the C-alpha B-factor (atom mean otherwise), NaN where missing.
 
         AlphaFold models store pLDDT in the B-factor column; for experimental structures these are B-factors.
         """
-        values = np.full(self.chains[chain_key]["sequence_length"], np.nan)
-        for position, residue in enumerate(self.chains[chain_key]["residues"]):
+        values = np.full(self.chains[chain_key].sequence_length, np.nan)
+        for position, residue in enumerate(self.chains[chain_key].residues):
             if "CA" in residue:
                 values[position] = residue["CA"].get_bfactor()
             else:
@@ -106,9 +155,9 @@ class ContactPlotMixin:
                     values[position] = np.mean([atom.get_bfactor() for atom in atoms])
         return values
 
-    def _chain_name(self, chain_key):
+    def _quoted_auth_id(self, chain_key):
         """Return the quoted author chain ID used in plot text, such as 'A'."""
-        return f"'{self.chains[chain_key]['auth_chain_id']}'"
+        return f"'{self.chains[chain_key].auth_chain_id}'"
 
     def _tick_labels(self, chain_key, n, tick_step, n_ticks=None):
         """Return tick positions and residue-number labels for one axis.
@@ -119,19 +168,19 @@ class ContactPlotMixin:
             tick_step: Spacing between ticks in sequence positions, used when n_ticks is None.
             n_ticks: Number of ticks along the axis, or None.
         """
-        residues = self.chains[chain_key]["residues"]
+        residues = self.chains[chain_key].residues
         positions = _tick_positions(n, tick_step, n_ticks)
         return positions, [str(residues[p].id[1]) if p < len(residues) else str(p + 1) for p in positions]
 
     @staticmethod
-    def _style_axes(ax, xpos, xlabels, ypos, ylabels, *, show_ticks, tick_size, tick_rotation,
+    def _style_axes(ax, x_ticks, x_tick_labels, y_ticks, y_tick_labels, *, show_ticks, tick_size, tick_rotation,
                     xlabel, ylabel, font_size):
         """Apply tick positions, tick labels, and axis titles to an Axes.
 
         Args:
             ax: Matplotlib Axes.
-            xpos, xlabels: X tick positions and labels.
-            ypos, ylabels: Y tick positions and labels.
+            x_ticks, x_tick_labels: X tick positions and labels.
+            y_ticks, y_tick_labels: Y tick positions and labels.
             show_ticks: Whether to draw tick marks and labels.
             tick_size: Tick label font size, or None for a fixed share of font_size.
             tick_rotation: X tick label rotation in degrees.
@@ -139,8 +188,8 @@ class ContactPlotMixin:
             font_size: Base font size.
         """
         if show_ticks:
-            ax.set_xticks(xpos, xlabels)
-            ax.set_yticks(ypos, ylabels)
+            ax.set_xticks(x_ticks, x_tick_labels)
+            ax.set_yticks(y_ticks, y_tick_labels)
             ax.tick_params(labelsize=tick_size if tick_size is not None else font_size * CONTACT_TICK_RATIO)
             ax.tick_params(axis="x", labelrotation=tick_rotation)
         else:
@@ -180,17 +229,17 @@ class ContactPlotMixin:
             colormap = mpl.colormaps[cmap].copy()
             colormap.set_bad(background)
             return ax.imshow(np.ma.masked_invalid(matrix), cmap=colormap, vmin=0, vmax=cutoff, interpolation="nearest")
-        size = marker_pt ** 2
+        marker_area = marker_pt ** 2
         if gray_matrix is not None:
             rows, cols = np.nonzero(~np.isnan(gray_matrix))
             ax.scatter(cols, rows, c=gray_matrix[rows, cols], cmap=CONTACT_GRAY_CMAP, vmin=0, vmax=gray_cutoff,
-                       s=size, marker="s", linewidths=0, zorder=1)
+                       s=marker_area, marker="s", linewidths=0, zorder=1)
         rows, cols = np.nonzero(~np.isnan(matrix))
         if value == "contact":
-            ax.scatter(cols, rows, s=size, marker="s", color=color, linewidths=0, zorder=2)
+            ax.scatter(cols, rows, s=marker_area, marker="s", color=color, linewidths=0, zorder=2)
             return None
         return ax.scatter(cols, rows, c=matrix[rows, cols], cmap=cmap, vmin=0, vmax=cutoff,
-                          s=size, marker="s", linewidths=0, zorder=2)
+                          s=marker_area, marker="s", linewidths=0, zorder=2)
 
     def _draw_pair(self, ax, matrix, chain_a, chain_b, *, value, style, background, color, cmap,
                    cutoff, font_size, tick_step, min_marker_pt, map_size_in, title,
@@ -227,20 +276,20 @@ class ContactPlotMixin:
         mappable = self._paint(ax, matrix, gray_matrix, value, style, background, color, cmap,
                                cutoff, gray_cutoff, marker_pt)
         if mappable is not None and value == "distance":
-            colorbar = ax.figure.colorbar(mappable, ax=ax, fraction=0.046, pad=0.04)
+            colorbar = ax.figure.colorbar(mappable, ax=ax, fraction=COLORBAR_FRACTION, pad=COLORBAR_PAD)
             colorbar.set_label("min distance (nm)", fontsize=font_size)
             colorbar.ax.tick_params(labelsize=font_size * CONTACT_TICK_RATIO)
-        xpos, xlabels = self._tick_labels(chain_b, n_cols, tick_step, n_ticks)
-        ypos, ylabels = self._tick_labels(chain_a, n_rows, tick_step, n_ticks)
-        self._style_axes(ax, xpos, xlabels, ypos, ylabels, show_ticks=show_ticks, tick_size=tick_size,
-                         tick_rotation=tick_rotation, xlabel=xlabel or self._chain_name(chain_b),
-                         ylabel=ylabel or self._chain_name(chain_a), font_size=font_size)
+        x_ticks, x_tick_labels = self._tick_labels(chain_b, n_cols, tick_step, n_ticks)
+        y_ticks, y_tick_labels = self._tick_labels(chain_a, n_rows, tick_step, n_ticks)
+        self._style_axes(ax, x_ticks, x_tick_labels, y_ticks, y_tick_labels, show_ticks=show_ticks, tick_size=tick_size,
+                         tick_rotation=tick_rotation, xlabel=xlabel or self._quoted_auth_id(chain_b),
+                         ylabel=ylabel or self._quoted_auth_id(chain_a), font_size=font_size)
         ax.set_title(title, fontsize=font_size * CONTACT_TITLE_RATIO)
 
     def _checked_matrix(self, matrix, chain_a, chain_b):
         """Return a precomputed matrix as float after checking its shape matches the two chains."""
         matrix = np.asarray(matrix, dtype=float)
-        expected = (self.chains[chain_a]["sequence_length"], self.chains[chain_b]["sequence_length"])
+        expected = (self.chains[chain_a].sequence_length, self.chains[chain_b].sequence_length)
         if matrix.shape != expected:
             raise ValueError(f"matrix shape {matrix.shape} does not match chains {expected}.")
         return matrix
@@ -298,7 +347,7 @@ class ContactPlotMixin:
         if style not in CONTACT_MAP_STYLES:
             raise ValueError(f"style must be one of {CONTACT_MAP_STYLES}.")
         font_size = _font_size(size_in, font_size)
-        chain_a, chain_b, _, _ = self._pair_keys(chain_a, chain_b)
+        chain_a, chain_b, _, _ = self._resolve_pair(chain_a, chain_b)
         gray_matrix = None
         if gray and value == "contact":
             gray_cutoff = _gray_limit(cutoff, gray_cutoff)
@@ -317,7 +366,7 @@ class ContactPlotMixin:
             ax, matrix, chain_a, chain_b, value=value, style=style, background=background, color=color,
             cmap=cmap, cutoff=cutoff, font_size=font_size, tick_step=tick_step,
             min_marker_pt=min_marker_pt, map_size_in=size_in,
-            title=title or f"Contacts {self._chain_name(chain_a)}-{self._chain_name(chain_b)} (cutoff {cutoff} nm)",
+            title=title or f"Contacts {self._quoted_auth_id(chain_a)}-{self._quoted_auth_id(chain_b)} (cutoff {cutoff} nm)",
             gray_matrix=gray_matrix, gray_cutoff=gray_cutoff, n_ticks=n_ticks, show_ticks=show_ticks,
             tick_size=tick_size, tick_rotation=tick_rotation, xlabel=xlabel, ylabel=ylabel,
         )
@@ -384,24 +433,13 @@ class ContactPlotMixin:
             raise ValueError(f"pair_colors needs {len(pairs)} colors for {len(keys)} chains.")
         size_in = size_in or CONTACT_MULTI_SIZE_IN.get(len(keys), max(CONTACT_MULTI_SIZE_IN.values()))
         font_size = _font_size(size_in, font_size)
-        names = [self._chain_name(k) for k in keys]
+        names = [self._quoted_auth_id(k) for k in keys]
         gray_cutoff = _gray_limit(cutoff, gray_cutoff)
         block = self._block_matrix(keys, gray_cutoff, scheme, moieties)
         matrix, sizes, offsets = block["matrix"], block["sizes"], block["offsets"]
-        size = sum(sizes)
-
-        block_of = np.repeat(np.arange(len(keys)), sizes)
-        pair_code = np.full((len(keys), len(keys)), -1)
-        for p, (a, b) in enumerate(pairs):
-            pair_code[a, b] = pair_code[b, a] = p
-        index = np.arange(size)
-        same_block = block_of[:, None] == block_of[None, :]
-        pair_index = pair_code[block_of[:, None], block_of[None, :]]
-        far_enough = np.abs(index[:, None] - index[None, :]) >= min_separation
-        close = matrix <= cutoff
-        gray_mask = ~np.isnan(matrix) & (~same_block | far_enough)
-        intra_close = close & same_block & far_enough
-        inter_close = close & ~same_block
+        n_total = sum(sizes)
+        gray_mask, colored_masks = _multi_masks(matrix, sizes, pairs, cutoff, min_separation)
+        colors = [intra_color] + list(pair_colors[:len(pairs)])
 
         if ax is None:
             fig, ax = plt.subplots(figsize=(size_in, size_in), dpi=dpi)
@@ -409,40 +447,22 @@ class ContactPlotMixin:
             fig = ax.figure
         margin = MULTI_TRACK_OFFSET + 0.5 if plddt else 0.5
         ax.set_facecolor(background)
-        ax.set_xlim(-margin, size - 0.5)
-        ax.set_ylim(size - 0.5, -margin)
+        ax.set_xlim(-margin, n_total - 0.5)
+        ax.set_ylim(n_total - 0.5, -margin)
         ax.set_aspect("equal", adjustable="box")
 
-        marker_area = _marker_points(size_in, size, size, min_marker_pt) ** 2
+        marker_area = _marker_points(size_in, n_total, n_total, min_marker_pt) ** 2
         rows, cols = np.nonzero(gray_mask)
         background_scatter = ax.scatter(cols, rows, c=matrix[rows, cols], cmap=CONTACT_GRAY_CMAP,
                                         vmin=0, vmax=gray_cutoff, s=marker_area, marker="s", linewidths=0, zorder=1)
-        masks = [(intra_close, intra_color)] + [(inter_close & (pair_index == p), pair_colors[p]) for p in range(len(pairs))]
-        for mask, color in masks:
+        for mask, color in zip(colored_masks, colors):
             rows, cols = np.nonzero(mask)
             ax.scatter(cols, rows, s=marker_area, marker="s", color=color, linewidths=0, zorder=2)
-
         if plddt:
-            colors = plddt_colors(np.concatenate([self._residue_plddt(k) for k in keys]))
-            track = np.full(size, -MULTI_TRACK_OFFSET)
-            for x, y in ((index, track), (track, index)):
-                ax.scatter(x, y, c=colors, s=marker_area, marker="s", linewidths=0, clip_on=False, zorder=2)
+            self._draw_plddt_tracks(ax, keys, n_total, marker_area)
+        _draw_multi_boundaries(ax, offsets, sizes, n_total, box_color, box_lw)
 
-        boundaries = offsets[1:] - 0.5
-        ax.hlines(boundaries, -0.5, size - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
-        ax.vlines(boundaries, -0.5, size - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
-        for start, length in zip(offsets, sizes):
-            ax.add_patch(Rectangle((start - 0.5, start - 0.5), length, length, fill=False,
-                                   edgecolor=box_color, linewidth=box_lw, zorder=3))
-
-        ticks, tick_labels = [], []
-        for k_index, (k, offset, n) in enumerate(zip(keys, offsets, sizes)):
-            positions, chain_labels = self._tick_labels(k, n, tick_step, n_ticks)
-            if k_index:
-                positions, chain_labels = positions[1:], chain_labels[1:]
-            ticks.append(positions + offset)
-            tick_labels += chain_labels
-        ticks = np.concatenate(ticks)
+        ticks, tick_labels = self._multi_ticks(keys, offsets, sizes, tick_step, n_ticks)
         default_axis = " | ".join(names)
         self._style_axes(ax, ticks, tick_labels, ticks, tick_labels, show_ticks=show_ticks,
                          tick_size=tick_size, tick_rotation=tick_rotation,
@@ -450,20 +470,50 @@ class ContactPlotMixin:
         ax.set_title(title or f"Contacts {'-'.join(names)} (cutoff {cutoff} nm)", fontsize=font_size * CONTACT_TITLE_RATIO)
 
         if show_color_legend:
-            handles = [Patch(facecolor=intra_color, label="intra-chain")]
-            handles += [Patch(facecolor=pair_colors[p], label=f"{names[a]}-{names[b]}") for p, (a, b) in enumerate(pairs)]
-            if plddt:
-                handles += [Patch(facecolor=color, label=f"pLDDT {label}") for label, color in PLDDT_BANDS]
-            ax.legend(handles=handles, loc="upper center",
-                      bbox_to_anchor=(0.5, _legend_offset(size_in, font_size, len(handles), 2)), ncol=2,
-                      fontsize=font_size, frameon=False)
+            _multi_legend(ax, names, pairs, pair_colors, intra_color, plddt, size_in, font_size)
         if show_distance_legend:
-            colorbar = fig.colorbar(background_scatter, ax=ax, fraction=0.046, pad=0.04)
+            colorbar = fig.colorbar(background_scatter, ax=ax, fraction=COLORBAR_FRACTION, pad=COLORBAR_PAD)
             colorbar.set_label("distance (nm)", fontsize=font_size)
             colorbar.ax.tick_params(labelsize=font_size * CONTACT_TICK_RATIO)
         if save_path is not None:
             fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
         return fig, ax
+
+    def _draw_plddt_tracks(self, ax, keys, n_total, marker_area):
+        """Draw pLDDT bands along the top and left edges of a multi-chain map, from each residue's B-factor.
+
+        Args:
+            ax: Matplotlib Axes.
+            keys: Chain keys in axis order.
+            n_total: Number of residues along each axis.
+            marker_area: Marker area in square points.
+        """
+        colors = plddt_colors(np.concatenate([self._residue_bfactor_as_plddt(k) for k in keys]))
+        index = np.arange(n_total)
+        track = np.full(n_total, -MULTI_TRACK_OFFSET)
+        for x, y in ((index, track), (track, index)):
+            ax.scatter(x, y, c=colors, s=marker_area, marker="s", linewidths=0, clip_on=False, zorder=2)
+
+    def _multi_ticks(self, keys, offsets, sizes, tick_step, n_ticks):
+        """Return the tick positions and residue-number labels of a multi-chain map, shared by both axes.
+
+        The first tick of each chain after the first is dropped so chain boundaries are not labelled twice.
+
+        Args:
+            keys: Chain keys in axis order.
+            offsets: Start index of each chain in the block matrix.
+            sizes: Number of residues of each chain.
+            tick_step: Spacing of ticks, used when n_ticks is None.
+            n_ticks: Number of ticks per chain, or None.
+        """
+        ticks, tick_labels = [], []
+        for chain_index, (key, offset, n) in enumerate(zip(keys, offsets, sizes)):
+            positions, chain_labels = self._tick_labels(key, n, tick_step, n_ticks)
+            if chain_index:
+                positions, chain_labels = positions[1:], chain_labels[1:]
+            ticks.append(positions + offset)
+            tick_labels += chain_labels
+        return np.concatenate(ticks), tick_labels
 
     def plot_contact_panel(self, chain_a="A", chain_b=None, cutoff=CONTACTS_CUTOFF_NM,
                            moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca", style="scatter",
@@ -497,8 +547,8 @@ class ContactPlotMixin:
             Tuple of (figure, axes) where axes is a 2x2 array.
         """
         font_size = _font_size(size_in / 2, font_size)
-        chain_a, chain_b, label_a, label_b = self._pair_keys(chain_a, chain_b)
-        name_a, name_b = self._chain_name(chain_a), self._chain_name(chain_b)
+        chain_a, chain_b, label_a, label_b = self._resolve_pair(chain_a, chain_b)
+        name_a, name_b = self._quoted_auth_id(chain_a), self._quoted_auth_id(chain_b)
         pair = self.contact_matrix(chain_a, chain_b, cutoff, moieties, scheme)
         contacts = pair["contacts"]
         keys = list(dict.fromkeys((chain_a, chain_b)))
@@ -520,7 +570,7 @@ class ContactPlotMixin:
 
         profile, separation = stats["profile"], stats["separation"]
         for index, key in enumerate(keys):
-            label, name = self.chains[key]["chain_id"], self._chain_name(key)
+            label, name = self.chains[key].chain_id, self._quoted_auth_id(key)
             line_color = CONTACT_PANEL_LINE_COLORS[index % len(CONTACT_PANEL_LINE_COLORS)]
             rows = profile[(profile["chain_id"] == label) & profile["sequence_index"].notna()]
             ax_profile.step(rows["resnum"], rows["n_contacts"], where="mid", color=line_color, label=f"chain {name}")

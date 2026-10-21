@@ -10,6 +10,8 @@ from .sequence import cif_sequence, clean_val, to_list
 
 
 class MetadataMixin:
+    """Lookups from mmCIF metadata: entities, label and author ID maps, external references, and descriptions."""
+
     def _field(self, name):
         """Return an mmCIF field as a list of strings."""
         return to_list(self.mmcif_dict.get(name))

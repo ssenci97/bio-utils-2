@@ -2,12 +2,16 @@
 
 ###################################### IMPORTS AND CONSTANTS
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 import requests
 
-from .constants import PUB_COLUMNS, RCSB_GRAPHQL_URL, RCSB_RETURN_TYPES, RCSB_SEARCH_URL
+from .constants import (
+    PUB_COLUMNS, RCSB_COUNT_MAX_DEFAULT, RCSB_GRAPHQL_URL, RCSB_RESOLUTION_MAX_DEFAULT, RCSB_RESOLUTION_MIN_DEFAULT,
+    RCSB_RETURN_TYPES, RCSB_SEARCH_URL,
+)
+from .utils import log_info
 
 PUB_QUERY = """query($ids: [String!]!) {
   entries(entry_ids: $ids) {
@@ -22,9 +26,12 @@ PUB_QUERY = """query($ids: [String!]!) {
 ###################################### QUERY NODES
 
 
-def _text(attr, op, val, neg=False):
+def _text_node(attribute, operator, value, negate=False):
     """Return a text-service terminal node."""
-    return {"type": "terminal", "service": "text", "parameters": {"attribute": attr, "operator": op, "negation": neg, "value": val}}
+    return {
+        "type": "terminal", "service": "text",
+        "parameters": {"attribute": attribute, "operator": operator, "negation": negate, "value": value},
+    }
 
 
 def _full_text(val):
@@ -40,20 +47,64 @@ def _group(nodes, op="or"):
 ###################################### SEARCH
 
 
+def _criteria_nodes(organisms, keywords, title_contains, keywords_field, experimental_method, resolution_max,
+                    resolution_min, release_date_from, release_date_to, polymer_entity_count_min,
+                    polymer_entity_count_max, uniprot_ids, enzyme_classification):
+    """Return one query node per criterion that is set; values within a criterion are OR-ed by the caller's grouping."""
+    nodes = []
+    if organisms:
+        nodes.append(_group([_text_node("rcsb_entity_source_organism.ncbi_scientific_name", "contains_phrase", o) for o in organisms]))
+    if keywords:
+        nodes.append(_group([_full_text(k) for k in keywords]))
+    if title_contains:
+        nodes.append(_group([_text_node("struct.title", "contains_words", x) for x in title_contains]))
+    if keywords_field:
+        nodes.append(_group([_text_node("struct_keywords.pdbx_keywords", "contains_words", x) for x in keywords_field]))
+    if experimental_method:
+        nodes.append(_group([_text_node("exptl.method", "exact_match", m) for m in experimental_method]))
+    if resolution_min is not None or resolution_max is not None:
+        nodes.append(_text_node("rcsb_entry_info.resolution_combined", "range", {
+            "from": resolution_min if resolution_min is not None else RCSB_RESOLUTION_MIN_DEFAULT,
+            "to": resolution_max if resolution_max is not None else RCSB_RESOLUTION_MAX_DEFAULT,
+            "include_lower": True, "include_upper": True}))
+    if release_date_from or release_date_to:
+        date_range = {"include_lower": True, "include_upper": True}
+        if release_date_from:
+            date_range["from"] = release_date_from
+        if release_date_to:
+            date_range["to"] = release_date_to
+        nodes.append(_text_node("rcsb_accession_info.initial_release_date", "range", date_range))
+    if polymer_entity_count_min is not None or polymer_entity_count_max is not None:
+        nodes.append(_text_node("rcsb_entry_info.polymer_entity_count", "range", {
+            "from": polymer_entity_count_min if polymer_entity_count_min is not None else 0,
+            "to": polymer_entity_count_max if polymer_entity_count_max is not None else RCSB_COUNT_MAX_DEFAULT,
+            "include_lower": True, "include_upper": True}))
+    if uniprot_ids:
+        nodes.append(_group([
+            _text_node("rcsb_polymer_entity_container_identifiers.reference_sequence_identifiers.database_accession",
+                       "exact_match", u)
+            for u in uniprot_ids
+        ]))
+    if enzyme_classification:
+        nodes.append(_group([_text_node("rcsb_polymer_entity.rcsb_enzyme_class_combined.ec", "exact_match", e)
+                             for e in enzyme_classification]))
+    return nodes
+
+
 def search_rcsb(
-    organisms: Optional[List[str]] = None,
-    keywords: Optional[List[str]] = None,
-    title_contains: Optional[List[str]] = None,
-    keywords_field: Optional[List[str]] = None,
-    experimental_method: Optional[List[str]] = None,
-    resolution_max: Optional[float] = None,
-    resolution_min: Optional[float] = None,
-    release_date_from: Optional[str] = None,
-    release_date_to: Optional[str] = None,
-    polymer_entity_count_min: Optional[int] = None,
-    polymer_entity_count_max: Optional[int] = None,
-    uniprot_ids: Optional[List[str]] = None,
-    enzyme_classification: Optional[List[str]] = None,
+    organisms: list[str] | None = None,
+    keywords: list[str] | None = None,
+    title_contains: list[str] | None = None,
+    keywords_field: list[str] | None = None,
+    experimental_method: list[str] | None = None,
+    resolution_max: float | None = None,
+    resolution_min: float | None = None,
+    release_date_from: str | None = None,
+    release_date_to: str | None = None,
+    polymer_entity_count_min: int | None = None,
+    polymer_entity_count_max: int | None = None,
+    uniprot_ids: list[str] | None = None,
+    enzyme_classification: list[str] | None = None,
     return_type: str = "entry",
     max_rows: int = 10000,
     return_all_hits: bool = False,
@@ -61,7 +112,7 @@ def search_rcsb(
     sort_by: str = "score",
     sort_direction: str = "desc",
     timeout: int = 30,
-) -> List[str]:
+) -> list[str]:
     """Search RCSB PDB using the Search API v2; values within one criterion are OR-ed, criteria are AND-ed.
 
     Args:
@@ -97,46 +148,16 @@ def search_rcsb(
     """
     if return_type not in RCSB_RETURN_TYPES:
         raise ValueError(f"return_type must be one of {RCSB_RETURN_TYPES}, got {return_type!r}")
-    nodes = []
-    if organisms:
-        nodes.append(_group([_text("rcsb_entity_source_organism.ncbi_scientific_name", "contains_phrase", o) for o in organisms]))
-    if keywords:
-        nodes.append(_group([_full_text(k) for k in keywords]))
-    if title_contains:
-        nodes.append(_group([_text("struct.title", "contains_words", x) for x in title_contains]))
-    if keywords_field:
-        nodes.append(_group([_text("struct_keywords.pdbx_keywords", "contains_words", x) for x in keywords_field]))
-    if experimental_method:
-        nodes.append(_group([_text("exptl.method", "exact_match", m) for m in experimental_method]))
-    if resolution_min is not None or resolution_max is not None:
-        nodes.append(_text("rcsb_entry_info.resolution_combined", "range", {
-            "from": resolution_min if resolution_min is not None else 0.0,
-            "to": resolution_max if resolution_max is not None else 100.0,
-            "include_lower": True, "include_upper": True}))
-    if release_date_from or release_date_to:
-        dv = {"include_lower": True, "include_upper": True}
-        if release_date_from:
-            dv["from"] = release_date_from
-        if release_date_to:
-            dv["to"] = release_date_to
-        nodes.append(_text("rcsb_accession_info.initial_release_date", "range", dv))
-    if polymer_entity_count_min is not None or polymer_entity_count_max is not None:
-        nodes.append(_text("rcsb_entry_info.polymer_entity_count", "range", {
-            "from": polymer_entity_count_min if polymer_entity_count_min is not None else 0,
-            "to": polymer_entity_count_max if polymer_entity_count_max is not None else 9999,
-            "include_lower": True, "include_upper": True}))
-    if uniprot_ids:
-        nodes.append(_group([
-            _text("rcsb_polymer_entity_container_identifiers.reference_sequence_identifiers.database_accession", "exact_match", u)
-            for u in uniprot_ids
-        ]))
-    if enzyme_classification:
-        nodes.append(_group([_text("rcsb_polymer_entity.rcsb_enzyme_class_combined.ec", "exact_match", e) for e in enzyme_classification]))
+    nodes = _criteria_nodes(
+        organisms, keywords, title_contains, keywords_field, experimental_method, resolution_max, resolution_min,
+        release_date_from, release_date_to, polymer_entity_count_min, polymer_entity_count_max, uniprot_ids,
+        enzyme_classification,
+    )
     if not nodes:
         raise ValueError("At least one search criterion must be provided")
 
     content = ["experimental"] + (["computational"] if include_computational else [])
-    opts: Dict[str, Any] = {
+    opts: dict[str, Any] = {
         "results_content_type": content,
         "sort": [{"sort_by": sort_by, "direction": sort_direction}],
         "scoring_strategy": "combined",
@@ -198,18 +219,20 @@ def search_rcsb_pubs(
         response = requests.post(RCSB_GRAPHQL_URL, json={"query": PUB_QUERY, "variables": {"ids": batch}}, timeout=timeout)
         response.raise_for_status()
         data = response.json()
-        if data.get("errors") and not data.get("data"):
-            raise requests.HTTPError(f"RCSB GraphQL error: {data['errors']}", response=response)
+        if data.get("errors"):
+            if not data.get("data"):
+                raise requests.HTTPError(f"RCSB GraphQL error: {data['errors']}", response=response)
+            log_info(f"RCSB GraphQL returned partial errors for batch starting {batch[0]}: {data['errors']}")
         for entry in (data.get("data") or {}).get("entries") or []:
-            for cit in entry.get("citation") or []:
-                is_primary = cit.get("rcsb_is_primary") == "Y"
+            for citation in entry.get("citation") or []:
+                is_primary = citation.get("rcsb_is_primary") == "Y"
                 if primary_only and not is_primary:
                     continue
                 rows.append([
-                    entry["rcsb_id"], cit.get("id"), is_primary, cit.get("title"),
-                    "; ".join(cit.get("rcsb_authors") or []), cit.get("journal_abbrev"), cit.get("journal_volume"),
-                    cit.get("page_first"), cit.get("page_last"), cit.get("year"),
-                    cit.get("pdbx_database_id_DOI"), cit.get("pdbx_database_id_PubMed"),
+                    entry["rcsb_id"], citation.get("id"), is_primary, citation.get("title"),
+                    "; ".join(citation.get("rcsb_authors") or []), citation.get("journal_abbrev"), citation.get("journal_volume"),
+                    citation.get("page_first"), citation.get("page_last"), citation.get("year"),
+                    citation.get("pdbx_database_id_DOI"), citation.get("pdbx_database_id_PubMed"),
                 ])
     pubs = pd.DataFrame(rows, columns=PUB_COLUMNS)
     pubs["year"] = pubs["year"].astype("Int64")

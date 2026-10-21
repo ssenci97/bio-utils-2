@@ -5,6 +5,7 @@
 import numpy as np
 
 from .constants import COMPLETE_MIN_SEPARATION, CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES
+from .utils import deprecated_method
 
 INDEX_COLUMNS = ["sequence_index_1", "sequence_index_2"]
 
@@ -12,7 +13,9 @@ INDEX_COLUMNS = ["sequence_index_1", "sequence_index_2"]
 
 
 class ContactMatrixMixin:
-    def _pair_keys(self, chain_a, chain_b):
+    """Residue-pair and block contact matrices."""
+
+    def _resolve_pair(self, chain_a, chain_b):
         """Return (key_a, key_b, label_a, label_b), with chain_b defaulting to chain_a for intra-chain maps.
 
         Args:
@@ -21,7 +24,7 @@ class ContactMatrixMixin:
         """
         chain_a = self._require_chain(chain_a)
         chain_b = chain_a if chain_b is None else self._require_chain(chain_b)
-        return chain_a, chain_b, self.chains[chain_a]["chain_id"], self.chains[chain_b]["chain_id"]
+        return chain_a, chain_b, self.chains[chain_a].chain_id, self.chains[chain_b].chain_id
 
     @staticmethod
     def _pair_rows(contacts, label_a, label_b):
@@ -45,9 +48,9 @@ class ContactMatrixMixin:
         contacts = contacts.dropna(subset=INDEX_COLUMNS)
         contacts = contacts[contacts["chain_1"].isin(position) & contacts["chain_2"].isin(position)]
         offsets = np.asarray(offsets, dtype=int)
-        gi = offsets[contacts["chain_1"].map(position).to_numpy(dtype=int)] + contacts["sequence_index_1"].to_numpy(dtype=int) - 1
-        gj = offsets[contacts["chain_2"].map(position).to_numpy(dtype=int)] + contacts["sequence_index_2"].to_numpy(dtype=int) - 1
-        return gi, gj, contacts["min_distance_nm"].to_numpy(dtype=float)
+        block_rows = offsets[contacts["chain_1"].map(position).to_numpy(dtype=int)] + contacts["sequence_index_1"].to_numpy(dtype=int) - 1
+        block_cols = offsets[contacts["chain_2"].map(position).to_numpy(dtype=int)] + contacts["sequence_index_2"].to_numpy(dtype=int) - 1
+        return block_rows, block_cols, contacts["min_distance_nm"].to_numpy(dtype=float)
 
     def _block_matrix(self, keys, cutoff, scheme, moieties):
         """Return a symmetric block matrix of minimum distances in nm for several chains, NaN for non-contacts.
@@ -61,8 +64,8 @@ class ContactMatrixMixin:
         Returns:
             Dict with 'matrix', 'sizes', 'offsets', 'labels', 'keys', and 'contacts'.
         """
-        labels = [self.chains[k]["chain_id"] for k in keys]
-        sizes = [self.chains[k]["sequence_length"] for k in keys]
+        labels = [self.chains[k].chain_id for k in keys]
+        sizes = [self.chains[k].sequence_length for k in keys]
         offsets = np.cumsum([0] + sizes[:-1]).astype(int)
         contacts = self.compute_contacts(cutoff=cutoff, contact_type="all", chain_ids=list(dict.fromkeys(keys)),
                                          scheme=scheme, moieties=moieties)
@@ -82,8 +85,8 @@ class ContactMatrixMixin:
             chain_a: Chain key on the rows.
             chain_b: Chain key on the columns.
         """
-        label_a, label_b = self.chains[chain_a]["chain_id"], self.chains[chain_b]["chain_id"]
-        matrix = np.full((self.chains[chain_a]["sequence_length"], self.chains[chain_b]["sequence_length"]), np.nan)
+        label_a, label_b = self.chains[chain_a].chain_id, self.chains[chain_b].chain_id
+        matrix = np.full((self.chains[chain_a].sequence_length, self.chains[chain_b].sequence_length), np.nan)
         rows = self._pair_rows(contacts, label_a, label_b).dropna(subset=INDEX_COLUMNS)
         forward = (rows["chain_1"] == label_a).to_numpy()
         first = rows["sequence_index_1"].to_numpy(dtype=int) - 1
@@ -109,14 +112,14 @@ class ContactMatrixMixin:
         Returns:
             Dict with 'matrix', 'labels' (standard IDs), 'keys', and 'contacts'.
         """
-        chain_a, chain_b, label_a, label_b = self._pair_keys(chain_a, chain_b)
+        chain_a, chain_b, label_a, label_b = self._resolve_pair(chain_a, chain_b)
         contacts = self.compute_contacts(cutoff=cutoff, contact_type="all", chain_ids=sorted({chain_a, chain_b}),
                                          scheme=scheme, moieties=moieties)
         return {"matrix": self._matrix_from_contacts(contacts, chain_a, chain_b), "labels": (label_a, label_b),
                 "keys": (chain_a, chain_b), "contacts": contacts}
 
-    def complete_contacts(self, chain_a="A", chain_b="B", cutoff=CONTACTS_CUTOFF_NM,
-                          moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca", min_separation=COMPLETE_MIN_SEPARATION):
+    def block_contact_matrix(self, chain_a="A", chain_b="B", cutoff=CONTACTS_CUTOFF_NM,
+                             moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca", min_separation=COMPLETE_MIN_SEPARATION):
         """Return the block contact matrix of two chains with intra- and inter-chain masks.
 
         Args:
@@ -130,10 +133,10 @@ class ContactMatrixMixin:
         Returns:
             Dict with 'matrix', 'intra', 'inter' (boolean masks), 'sizes', 'labels', 'keys', and 'contacts'.
         """
-        k1, k2, _, _ = self._pair_keys(chain_a, chain_b)
-        if k1 == k2:
+        key_a, key_b, _, _ = self._resolve_pair(chain_a, chain_b)
+        if key_a == key_b:
             raise ValueError("chain_a and chain_b must be different chains for a block map.")
-        block = self._block_matrix([k1, k2], cutoff, scheme, moieties)
+        block = self._block_matrix([key_a, key_b], cutoff, scheme, moieties)
         n1 = block["sizes"][0]
         index = np.arange(len(block["matrix"]))
         same_block = (index < n1)[:, None] == (index < n1)[None, :]
@@ -145,6 +148,8 @@ class ContactMatrixMixin:
             "inter": contact & ~same_block,
             "sizes": tuple(block["sizes"]),
             "labels": tuple(block["labels"]),
-            "keys": (k1, k2),
+            "keys": (key_a, key_b),
             "contacts": block["contacts"],
         }
+
+    complete_contacts = deprecated_method("complete_contacts", "block_contact_matrix")

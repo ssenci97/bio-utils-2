@@ -5,20 +5,23 @@
 import io
 import time
 import urllib.request
+import warnings
 from pathlib import Path
 
 from Bio.PDB import MMCIFParser, PDBParser
 from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 
-from .constants import DEFAULT_CONFIG_PATH, RCSB_URL, SUPPORTED_SUFFIXES
-from .utils import finish_log
+from .constants import RCSB_URL, SUPPORTED_SUFFIXES
+from .utils import log_completion, log_info
 
 ###################################### LOADERS
 
 
 class LoaderMixin:
+    """Constructors that load structures from RCSB, local files, or Biopython objects."""
+
     @classmethod
-    def from_rcsb_id(cls, pdb_id, config_path=DEFAULT_CONFIG_PATH, key_by="auth"):
+    def from_rcsb(cls, pdb_id, config_path=None, key_by="auth"):
         """Download an mmCIF structure from RCSB and return a SyncedStructure.
 
         Args:
@@ -39,11 +42,17 @@ class LoaderMixin:
             config_path=config_path,
             key_by=key_by,
         )
-        finish_log(start, f"Loaded RCSB structure {pdb_id}")
+        log_completion(start, f"Loaded RCSB structure {pdb_id}")
         return obj
 
     @classmethod
-    def from_path(cls, path, config_path=DEFAULT_CONFIG_PATH, key_by="auth"):
+    def from_rcsb_id(cls, *args, **kwargs):
+        """Deprecated alias of from_rcsb()."""
+        warnings.warn("from_rcsb_id() is deprecated; use from_rcsb().", DeprecationWarning, stacklevel=2)
+        return cls.from_rcsb(*args, **kwargs)
+
+    @classmethod
+    def from_path(cls, path, config_path=None, key_by="auth"):
         """Load a local PDB or mmCIF file; the file stem becomes the structure and entity ID.
 
         Args:
@@ -60,6 +69,8 @@ class LoaderMixin:
             raise ValueError(f"Unsupported structure format: {suffix}. Supported formats: {sorted(SUPPORTED_SUFFIXES)}")
         structure_id = path.stem
         if suffix == ".pdb":
+            if key_by == "label":
+                log_info(f"{structure_id}: key_by='label' is not available for PDB files; chains keep their PDB IDs.")
             structure = PDBParser(QUIET=True).get_structure(structure_id, str(path))
             mmcif_dict, file_format = {}, "pdb"
         else:
@@ -74,12 +85,12 @@ class LoaderMixin:
             default_entity_id=structure_id,
             key_by=key_by,
         )
-        finish_log(start, f"Loaded local structure {path}")
+        log_completion(start, f"Loaded local structure {path}")
         return obj
 
     @classmethod
     def from_biopython(cls, structure, structure_id=None, mmcif_dict=None, file_format="pdb",
-                       config_path=DEFAULT_CONFIG_PATH, key_by="auth"):
+                       config_path=None, key_by="auth"):
         """Wrap an existing Biopython Structure in a SyncedStructure; the structure ID becomes the default entity ID.
 
         Args:

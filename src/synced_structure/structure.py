@@ -4,7 +4,7 @@
 
 from .alignment import AlignmentMixin, make_global_aligner, make_local_aligner
 from .chains import ChainMixin
-from .constants import CONFIG_SECTION, DEFAULT_CONFIG, DEFAULT_CONFIG_PATH, KEY_MODES
+from .constants import CONFIG_SECTION, DEFAULT_CONFIG, KEY_MODES
 from .contact_matrix import ContactMatrixMixin
 from .contact_plots import ContactPlotMixin
 from .contact_stats import ContactStatsMixin
@@ -22,8 +22,10 @@ from .viz3d import Viz3DMixin
 
 class SyncedStructure(LoaderMixin, MetadataMixin, ChainMixin, AlignmentMixin, ResidueMixin, ContactMixin,
                       ContactMatrixMixin, ContactStatsMixin, ContactPlotMixin, ExportMixin, InterfaceMixin, Viz3DMixin):
+    """A structure whose chains are held by author or label IDs, with mapping, contacts, interfaces, and plots."""
+
     def __init__(self, structure, structure_id="structure", mmcif_dict=None,
-                 file_format="cif", config_path=DEFAULT_CONFIG_PATH, default_entity_id=None, key_by="auth"):
+                 file_format="cif", config_path=None, default_entity_id=None, key_by="auth"):
         """Build the synchronized structure from a Biopython Structure and its optional YAML config.
 
         Args:

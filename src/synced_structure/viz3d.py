@@ -1,4 +1,6 @@
-"""Jupyter visualization for synchronized structures: clickable py3Dmol views using mmCIF input, with a centered title above the view, per-chain colors, representation styles, backgrounds, sizes, rotation angles with reset and current readout buttons, and side-by-side layouts."""
+"""Jupyter 3D views of synchronized structures using 3Dmol.js.
+
+Views are clickable, with a centered title above them, per-chain colors, representation styles, backgrounds, sizes, rotation angles with reset and current readout buttons, and side-by-side layouts."""
 
 ###################################### IMPORTS AND CONSTANTS
 
@@ -13,19 +15,19 @@ from html import escape
 from Bio.PDB import MMCIFIO
 from IPython.display import HTML
 
-from .utils import finish_log, log_info
+from .constants import PALETTE
+from .utils import deprecated_method, log_completion, log_info
 
 VIZ_SIZE_PX = 400
 VIZ_BACKGROUND = "white"
 VIZ_STYLES = ("cartoon", "stick", "sphere", "line")
 VIZ_FORMAT = "cif"
 VIZ_JS_URL = "https://3dmol.org/build/3Dmol-min.js"
-SHOW_ANGLES = True
+DEFAULT_SHOW_ANGLES = True
 TITLE_FONT_PX = 16
 ANGLES_FONT_PX = 12
 SIDE_BY_SIDE_GAP_PX = 16
-CHAIN_PALETTE = ("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-                 "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf")
+CHAIN_PALETTE = tuple(PALETTE)
 CHAIN_LABEL_JS = (
     "function(atom,viewer,event,container){"
     "if(!atom.label){"
@@ -110,6 +112,8 @@ def _quaternion(angles):
 
 
 class Viz3DMixin:
+    """Jupyter 3Dmol.js views of the structure."""
+
     def _chain_colors(self, colors=None, chain_palette=CHAIN_PALETTE):
         """Return {chain_id: color} for loaded chains, ignoring unloaded chains and filling gaps from the palette.
 
@@ -176,8 +180,8 @@ class Viz3DMixin:
             background: Background color.
             size: Width and height of the view in pixels.
             show_angles: If True, display the angles and the buttons in the bottom right corner.
-            viz_format: Structure format passed to py3Dmol.
-            js_url: URL of the py3Dmol script.
+            viz_format: Structure format passed to 3Dmol.js.
+            js_url: URL of the 3Dmol.js script.
             label_js: JavaScript click handler that toggles atom labels.
             angles_js: JavaScript that converts a quaternion into x, y, z degrees.
             angles_font_px: Font size of the angle overlay in pixels.
@@ -202,11 +206,11 @@ class Viz3DMixin:
 
 ###################################### PUBLIC ENTRY POINT
 
-    def jupy_viz(self, angles=(0, 0, 0), chain_id=None, colors=None, title=None,
-                 style="cartoon", background=VIZ_BACKGROUND, size=VIZ_SIZE_PX, show_angles=SHOW_ANGLES,
+    def show_structure_3d(self, angles=(0, 0, 0), chain_id=None, colors=None, title=None,
+                 style="cartoon", background=VIZ_BACKGROUND, size=VIZ_SIZE_PX, show_angles=DEFAULT_SHOW_ANGLES,
                  chain_palette=CHAIN_PALETTE, viz_format=VIZ_FORMAT, js_url=VIZ_JS_URL, label_js=CHAIN_LABEL_JS,
                  angles_js=ANGLES_JS, title_font_px=TITLE_FONT_PX, angles_font_px=ANGLES_FONT_PX):
-        """Show the structure in a Jupyter notebook as a clickable py3Dmol view with an optional centered title above it.
+        """Show the structure in a Jupyter notebook as a clickable 3Dmol.js view with an optional centered title above it.
 
         Args:
             angles: Rotation (x, y, z) in degrees, applied as the pose and displayed when show_angles is True.
@@ -218,15 +222,15 @@ class Viz3DMixin:
             size: Width and height of the view in pixels.
             show_angles: If True, display the angles with a reset button (rebuilds the input pose) and a current button (reads the live orientation).
             chain_palette: Colors used for chains without an explicit color, in order.
-            viz_format: Structure format passed to py3Dmol.
-            js_url: URL of the py3Dmol script.
+            viz_format: Structure format passed to 3Dmol.js.
+            js_url: URL of the 3Dmol.js script.
             label_js: JavaScript click handler that toggles atom labels.
             angles_js: JavaScript that converts a quaternion into x, y, z degrees.
             title_font_px: Font size of the title in pixels.
             angles_font_px: Font size of the angle overlay in pixels.
 
         Returns:
-            An IPython HTML object containing the title and the py3Dmol view.
+            An IPython HTML object containing the title and the 3Dmol.js view.
         """
         if len(angles) != 3:
             raise ValueError("angles must contain three values (x, y, z) in degrees.")
@@ -240,17 +244,19 @@ class Viz3DMixin:
             heading = (f'<div style="width:{size}px;margin:0 auto 4px auto;text-align:center;font-family:sans-serif;'
                        f'font-size:{title_font_px}px;font-weight:bold">{escape(str(title))}</div>')
             html = heading + html
-        finish_log(start, f"Rendered view of {self.structure_id} at angles {tuple(angles)}")
+        log_completion(start, f"Rendered view of {self.structure_id} at angles {tuple(angles)}")
         return HTML(html)
+    jupy_viz = deprecated_method("jupy_viz", "show_structure_3d")
+
 
 ###################################### LAYOUT
 
 
 def side_by_side(*outputs, gap_px=SIDE_BY_SIDE_GAP_PX):
-    """Return one HTML object that places several jupy_viz outputs in a row, wrapping if the notebook is narrow.
+    """Return one HTML object that places several show_structure_3d outputs in a row, wrapping if the notebook is narrow.
 
     Args:
-        *outputs: HTML objects returned by jupy_viz, in left-to-right order.
+        *outputs: HTML objects returned by show_structure_3d, in left-to-right order.
         gap_px: Horizontal and vertical spacing between views in pixels.
     """
     if not outputs:

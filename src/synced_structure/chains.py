@@ -4,20 +4,72 @@
 
 import copy
 import itertools
+import warnings
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 from .alignment import query_coverage
-from .constants import CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, MATCH_COLUMNS, RENAME_COLUMNS
+from .constants import (
+    ANGSTROM_PER_NM, CONTACTS_CUTOFF_NM, COORD_BLOCK_ROWS, DEFAULT_CONTACT_MOIETIES, MATCH_COLUMNS, RENAME_COLUMNS,
+)
 from .residues import split_residues
 from .sequence import clean_sequence, residue_to_letter
 from .utils import log_info
+
+###################################### CHAIN RECORD
+
+
+@dataclass
+class ChainRecord:
+    """State of one loaded chain.
+
+    Sequence indices are 0-based. Values of sequence_index_to_ref_index are 0-based reference indices.
+    Attribute access is the supported interface; dict-style access still works but is deprecated.
+    """
+
+    chain: Any
+    chain_id: str
+    auth_chain_id: str
+    entity_id: Optional[str]
+    residues: List[Any]
+    moieties: List[str]
+    hetero: List[Tuple[Any, str]]
+    sequence: str
+    reference_sequence: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    external_ref: Optional[str] = None
+    refseq_id: Optional[str] = None
+    sequence_index_to_ref_index: Dict[int, int] = field(default_factory=dict)
+
+    @property
+    def sequence_length(self):
+        """Length of the observed polymer sequence."""
+        return len(self.sequence)
+
+    @property
+    def reference_length(self):
+        """Length of the reference sequence."""
+        return len(self.reference_sequence)
+
+    @property
+    def mapped_residues(self):
+        """Number of observed residues with a reference position."""
+        return len(self.sequence_index_to_ref_index)
+
+    def __getitem__(self, name):
+        """Return a field by name; deprecated in favour of attribute access."""
+        warnings.warn(f"ChainRecord['{name}'] is deprecated; use .{name}", DeprecationWarning, stacklevel=2)
+        return getattr(self, name)
 
 ###################################### CHAIN MANAGEMENT
 
 
 class ChainMixin:
+    """Chain lifecycle, reference sequence mapping, chain renaming, and per-chain summaries."""
+
     def _require_chain(self, chain_id):
         """Return the chain key matching a key, standard ID, or author ID, raising KeyError if not loaded.
 
@@ -27,9 +79,9 @@ class ChainMixin:
         chain_id = str(chain_id)
         if chain_id in self.chains:
             return chain_id
-        for field in ("chain_id", "auth_chain_id"):
+        for attribute in ("chain_id", "auth_chain_id"):
             for key, data in self.chains.items():
-                if data[field] == chain_id:
+                if getattr(data, attribute) == chain_id:
                     return key
         raise KeyError(f"Unknown chain: {chain_id}")
 
@@ -51,21 +103,9 @@ class ChainMixin:
             if ref_index >= 0 and seq_index >= 0
         }
 
-    def _store_mapping(self, data, index_mapping):
-        """Save an index mapping and its derived residue-ID mapping and count into chain data.
-
-        Args:
-            data: Chain data dict to update.
-            index_mapping: Dict from observed to reference indices.
-        """
-        residues = data["residues"]
-        data["sequence_index_to_ref_index"] = index_mapping
-        data["resid_to_ref_index"] = {residues[seq_index].id: ref_index for seq_index, ref_index in index_mapping.items()}
-        data["mapped_residues"] = len(index_mapping)
-
     def _make_chain_data(self, chain, reference_sequence=None, entity_id=None, metadata=None, external_ref=None,
                          refseq_id=None):
-        """Build the data dict for a chain, with its key, standard ID, author ID, and optional external and reference sequence IDs.
+        """Build the record of a chain, with its key, standard ID, author ID, and optional external and reference sequence IDs.
 
         Args:
             chain: Biopython Chain object, keyed by its chain key.
@@ -79,40 +119,40 @@ class ChainMixin:
         polymer, hetero = split_residues(chain)
         if reference_sequence is None:
             reference_sequence = self._reference_for_chain(key)
-        data = {
-            "chain": chain,
-            "chain_id": self._label_of(key),
-            "auth_chain_id": self._auth_of(key),
-            "entity_id": self._resolve_entity(key, entity_id),
-            "external_ref": external_ref,
-            "refseq_id": refseq_id,
-            "residues": [residue for residue, _ in polymer],
-            "moieties": [moiety for _, moiety in polymer],
-            "hetero": hetero,
-            "sequence": "".join(residue_to_letter(residue, moiety) for residue, moiety in polymer),
-            "reference_sequence": clean_sequence(reference_sequence),
-            "metadata": dict(metadata or {}),
-        }
-        data["sequence_length"] = len(data["sequence"])
-        data["reference_length"] = len(data["reference_sequence"])
-        self._store_mapping(data, self._map_to_reference(data["sequence"], data["reference_sequence"]))
-        return data
+        sequence = "".join(residue_to_letter(residue, moiety) for residue, moiety in polymer)
+        reference_sequence = clean_sequence(reference_sequence)
+        record = ChainRecord(
+            chain=chain,
+            chain_id=self._label_of(key),
+            auth_chain_id=self._auth_of(key),
+            entity_id=self._resolve_entity(key, entity_id),
+            residues=[residue for residue, _ in polymer],
+            moieties=[moiety for _, moiety in polymer],
+            hetero=hetero,
+            sequence=sequence,
+            reference_sequence=reference_sequence,
+            metadata=dict(metadata or {}),
+            external_ref=external_ref,
+            refseq_id=refseq_id,
+        )
+        record.sequence_index_to_ref_index = self._map_to_reference(sequence, reference_sequence)
+        return record
 
     def _build_chains(self):
-        """Rebuild chain data from the model, preserving reference, entity, metadata, external reference, and reference sequence ID of existing chains."""
+        """Rebuild chain records from the model, preserving reference, entity, metadata, external reference, and reference sequence ID of existing chains."""
         previous = self.chains
         rebuilt = {}
         for chain in self.model.get_chains():
             key = str(chain.id)
-            old = previous.get(key, {})
-            rebuilt[key] = self._make_chain_data(
-                chain,
-                reference_sequence=old.get("reference_sequence"),
-                entity_id=old.get("entity_id"),
-                metadata=old.get("metadata"),
-                external_ref=old.get("external_ref"),
-                refseq_id=old.get("refseq_id"),
-            )
+            old = previous.get(key)
+            kept = {} if old is None else {
+                "reference_sequence": old.reference_sequence,
+                "entity_id": old.entity_id,
+                "metadata": old.metadata,
+                "external_ref": old.external_ref,
+                "refseq_id": old.refseq_id,
+            }
+            rebuilt[key] = self._make_chain_data(chain, **kept)
         self.chains = rebuilt
         self._interface_cache.clear()
 
@@ -143,11 +183,11 @@ class ChainMixin:
 
     def get_sequence(self, chain_id):
         """Return the observed one-letter sequence of a chain."""
-        return self.chains[self._require_chain(chain_id)]["sequence"]
+        return self.chains[self._require_chain(chain_id)].sequence
 
     def get_reference_sequence(self, chain_id):
         """Return the reference sequence of a chain."""
-        return self.chains[self._require_chain(chain_id)]["reference_sequence"]
+        return self.chains[self._require_chain(chain_id)].reference_sequence
 
     def get_external_ref(self, chain_id):
         """Return the external reference of a chain: the user-set value if present, else the mmCIF accession.
@@ -156,9 +196,9 @@ class ChainMixin:
             chain_id: Chain identifier, standard or author.
         """
         data = self.chains[self._require_chain(chain_id)]
-        if data["external_ref"]:
-            return data["external_ref"]
-        return ", ".join(self._external_refs.get(data["entity_id"], [])) or None
+        if data.external_ref:
+            return data.external_ref
+        return ", ".join(self._external_refs.get(data.entity_id, [])) or None
 
     def set_external_ref(self, chain_id, external_ref):
         """Set a chain's external reference, overriding the mmCIF value in summaries, and return self.
@@ -168,7 +208,7 @@ class ChainMixin:
             external_ref: External accession string, or None to fall back to the mmCIF reference.
         """
         chain_id = self._require_chain(chain_id)
-        self.chains[chain_id]["external_ref"] = None if external_ref is None else str(external_ref)
+        self.chains[chain_id].external_ref = None if external_ref is None else str(external_ref)
         return self
 
     def get_refseq_id(self, chain_id):
@@ -178,7 +218,7 @@ class ChainMixin:
             chain_id: Chain identifier, standard or author.
         """
         data = self.chains[self._require_chain(chain_id)]
-        return data.get("refseq_id") or self.get_external_ref(chain_id)
+        return data.refseq_id or self.get_external_ref(chain_id)
 
     def set_refseq_id(self, chain_id, refseq_id):
         """Set the ID of a chain's reference sequence, which may differ from its external reference, and return self.
@@ -188,7 +228,7 @@ class ChainMixin:
             refseq_id: Reference sequence ID, or None to fall back to the external reference.
         """
         chain_id = self._require_chain(chain_id)
-        self.chains[chain_id]["refseq_id"] = None if refseq_id is None else str(refseq_id)
+        self.chains[chain_id].refseq_id = None if refseq_id is None else str(refseq_id)
         return self
 
     def set_chain_metadata(self, chain_id, key, value):
@@ -199,7 +239,7 @@ class ChainMixin:
             key: Metadata key.
             value: Value to store.
         """
-        self.chains[self._require_chain(chain_id)]["metadata"][str(key)] = value
+        self.chains[self._require_chain(chain_id)].metadata[str(key)] = value
         return self
 
     def set_entity_id(self, chain_id, entity_id):
@@ -209,7 +249,7 @@ class ChainMixin:
             chain_id: Chain identifier, standard or author.
             entity_id: New entity identifier.
         """
-        self.chains[self._require_chain(chain_id)]["entity_id"] = str(entity_id)
+        self.chains[self._require_chain(chain_id)].entity_id = str(entity_id)
         return self
 
     def set_reference_sequence(self, chain_id, sequence, remap=True):
@@ -222,10 +262,12 @@ class ChainMixin:
         """
         chain_id = self._require_chain(chain_id)
         data = self.chains[chain_id]
-        data["reference_sequence"] = clean_sequence(sequence)
-        data["reference_length"] = len(data["reference_sequence"])
-        index_mapping = self._map_to_reference(data["sequence"], data["reference_sequence"]) if remap else {}
-        self._store_mapping(data, index_mapping)
+        data.reference_sequence = clean_sequence(sequence)
+        if remap:
+            data.sequence_index_to_ref_index = self._map_to_reference(data.sequence, data.reference_sequence)
+        else:
+            data.sequence_index_to_ref_index = {}
+            log_info(f"{self.structure_id}: {chain_id} has no residue mapping until remapped.")
         return self
 
     def set_reference_sequences(self, sequences, remap=True):
@@ -237,7 +279,7 @@ class ChainMixin:
     def remap_chain(self, chain_id):
         """Rebuild the mapping of one chain against its current reference and return self."""
         chain_id = self._require_chain(chain_id)
-        self.set_reference_sequence(chain_id, self.chains[chain_id]["reference_sequence"], remap=True)
+        self.set_reference_sequence(chain_id, self.chains[chain_id].reference_sequence, remap=True)
         log_info(f"{self.structure_id}: remapped {chain_id}")
         return self
 
@@ -318,8 +360,10 @@ class ChainMixin:
 
 ###################################### SEQUENCE MATCHING AND RENAMING
 
-    def _pair_identity(self, seq_a, seq_b):
+    def _local_identity(self, seq_a, seq_b):
         """Return (identity_percent, aligned_residues, coverage_percent_of_b) from a local alignment.
+
+        Identity is matches over alignment columns where both sequences have a residue, gaps excluded.
 
         Args:
             seq_a: First sequence.
@@ -331,8 +375,8 @@ class ChainMixin:
         if not alignments:
             return 0.0, 0, 0.0
         top, bottom = alignments[0]
-        columns = [(x, y) for x, y in zip(top, bottom) if x != "-" and y != "-"]
-        matches = sum(x == y for x, y in columns)
+        columns = [(char_a, char_b) for char_a, char_b in zip(top, bottom) if char_a != "-" and char_b != "-"]
+        matches = sum(char_a == char_b for char_a, char_b in columns)
         aligned = len(columns)
         identity = round(matches / aligned * 100, 2) if aligned else 0.0
         return identity, aligned, query_coverage(aligned, len(seq_b))
@@ -347,11 +391,11 @@ class ChainMixin:
         query = clean_sequence(sequence)
         rows = []
         for data in self.chains.values():
-            identity, aligned, coverage = self._pair_identity(data["sequence"], query)
+            identity, aligned, coverage = self._local_identity(data.sequence, query)
             if aligned and identity >= min_identity:
                 rows.append({
-                    "chain_id": data["chain_id"],
-                    "auth_chain_id": data["auth_chain_id"],
+                    "chain_id": data.chain_id,
+                    "auth_chain_id": data.auth_chain_id,
                     "identity_percent": identity,
                     "aligned_residues": aligned,
                     "query_coverage_percent": coverage,
@@ -371,15 +415,15 @@ class ChainMixin:
         moved = {old: self.model[old] for old in resolved}
         for old in resolved:
             self.model.detach_child(old)
-        key_map = self._auth_to_label if self.key_by == "auth" else self._label_to_auth
-        other_map = self._label_to_auth if self.key_by == "auth" else self._auth_to_label
+        key_to_other = self._auth_to_label if self.key_by == "auth" else self._label_to_auth
+        other_to_key = self._label_to_auth if self.key_by == "auth" else self._auth_to_label
         for old, new in resolved.items():
             moved[old].id = new
             self.model.add(moved[old])
-            other = key_map.pop(old, None)
+            other = key_to_other.pop(old, None)
             if other is not None:
-                key_map[new] = other
-                other_map[other] = new
+                key_to_other[new] = other
+                other_to_key[other] = new
             entity = self._entity_by_chain.pop(old, None)
             if entity is not None:
                 self._entity_by_chain[new] = entity
@@ -387,6 +431,31 @@ class ChainMixin:
         self._alignment_cache.clear()
         self._build_chains()
         return self
+
+    def _match_targets(self, targets, min_identity):
+        """Pair each target with the most similar chain not yet used, greedily by identity.
+
+        Args:
+            targets: Dict of {new_key: cleaned sequence}.
+            min_identity: Minimum identity percent required for a pair.
+
+        Returns:
+            (renames, matched): renames maps old chain key to new key; matched maps new key to (old key, identity).
+        """
+        candidates = []
+        for new_id, sequence in targets.items():
+            for old_id, record in self.chains.items():
+                identity, aligned, _ = self._local_identity(record.sequence, sequence)
+                candidates.append((identity, aligned, old_id, new_id))
+        candidates.sort(key=lambda row: -row[0])
+        renames, matched, used_new = {}, {}, set()
+        for identity, _, old_id, new_id in candidates:
+            if new_id in used_new or old_id in renames or identity < min_identity:
+                continue
+            renames[old_id] = new_id
+            matched[new_id] = (old_id, identity)
+            used_new.add(new_id)
+        return renames, matched
 
     def rename_by_sequence(self, targets, min_identity=90.0):
         """Rename chain keys to match a {new_id: sequence} dict and report standard and author IDs of the old chains.
@@ -396,34 +465,21 @@ class ChainMixin:
             min_identity: Minimum identity percent required for a rename.
         """
         targets = {str(new): clean_sequence(seq) for new, seq in targets.items()}
-        candidates = []
-        for new_id, sequence in targets.items():
-            for old_id, data in self.chains.items():
-                identity, aligned, _ = self._pair_identity(data["sequence"], sequence)
-                candidates.append((identity, aligned, old_id, new_id))
-        candidates.sort(key=lambda row: -row[0])
-        renames, used_old, used_new, report = {}, set(), set(), {}
-        for identity, aligned, old_id, new_id in candidates:
-            if new_id in used_new or old_id in used_old or identity < min_identity:
-                continue
-            renames[old_id] = new_id
-            used_old.add(old_id)
-            used_new.add(new_id)
-            report[new_id] = (old_id, identity, "renamed")
+        renames, matched = self._match_targets(targets, min_identity)
         rows = []
         for new_id in targets:
-            if new_id in report:
-                old_id, identity, status = report[new_id]
+            if new_id in matched:
+                old_id, identity = matched[new_id]
                 old = self.chains[old_id]
-                rows.append({"new_chain_id": new_id, "old_chain_id": old["chain_id"],
-                             "old_auth_chain_id": old["auth_chain_id"], "identity_percent": identity, "status": status})
+                rows.append({"new_chain_id": new_id, "old_chain_id": old.chain_id,
+                             "old_auth_chain_id": old.auth_chain_id, "identity_percent": identity, "status": "renamed"})
             else:
                 rows.append({"new_chain_id": new_id, "old_chain_id": None, "old_auth_chain_id": None,
                              "identity_percent": None, "status": "unmatched_target"})
-        for key, data in self.chains.items():
-            if key not in used_old:
-                rows.append({"new_chain_id": None, "old_chain_id": data["chain_id"],
-                             "old_auth_chain_id": data["auth_chain_id"], "identity_percent": None,
+        for key, record in self.chains.items():
+            if key not in renames:
+                rows.append({"new_chain_id": None, "old_chain_id": record.chain_id,
+                             "old_auth_chain_id": record.auth_chain_id, "identity_percent": None,
                              "status": "unmatched_chain"})
         if renames:
             self.rename_chains(renames)
@@ -434,20 +490,21 @@ class ChainMixin:
 ###################################### CONTACT PARTNERS
 
     @staticmethod
-    def _coords_touch(xa, xb, cutoff, block=256):
-        """Return True if any coordinate in xa lies within cutoff of any coordinate in xb.
+    def _coords_touch(coords_a, coords_b, cutoff, block_rows=COORD_BLOCK_ROWS):
+        """Return True if any coordinate in coords_a lies within cutoff of any coordinate in coords_b.
 
         Args:
-            xa: Coordinates of the first set, in nm.
-            xb: Coordinates of the second set, in nm.
+            coords_a: Coordinates of the first set, in nm.
+            coords_b: Coordinates of the second set, in nm.
             cutoff: Distance cutoff in nm.
-            block: Number of rows of xa compared at once.
+            block_rows: Number of rows of coords_a compared at once.
         """
-        if (xa.min(axis=0) > xb.max(axis=0) + cutoff).any() or (xb.min(axis=0) > xa.max(axis=0) + cutoff).any():
+        if (coords_a.min(axis=0) > coords_b.max(axis=0) + cutoff).any() or (
+                coords_b.min(axis=0) > coords_a.max(axis=0) + cutoff).any():
             return False
         limit = cutoff * cutoff
-        for start in range(0, len(xa), block):
-            if (((xa[start:start + block, None] - xb[None]) ** 2).sum(axis=-1) <= limit).any():
+        for start in range(0, len(coords_a), block_rows):
+            if (((coords_a[start:start + block_rows, None] - coords_b[None]) ** 2).sum(axis=-1) <= limit).any():
                 return True
         return False
 
@@ -461,7 +518,7 @@ class ChainMixin:
         points = {}
         for record in self._contact_records(moieties=moieties):
             points.setdefault(record["key"], []).append(record["point"])
-        coords = {key: np.asarray(values, dtype=np.float64) / 10.0 for key, values in points.items()}
+        coords = {key: np.asarray(values, dtype=np.float64) / ANGSTROM_PER_NM for key, values in points.items()}
         partners = {key: [] for key in self.chains}
         for chain_a, chain_b in itertools.combinations(coords, 2):
             if self._coords_touch(coords[chain_a], coords[chain_b], cutoff):
@@ -476,17 +533,17 @@ class ChainMixin:
         descriptions = self._entity_descriptions()
         rows = []
         for key, data in self.chains.items():
-            length = data["sequence_length"]
+            length = data.sequence_length
             rows.append({
-                "chain_id": data["chain_id"],
-                "auth_chain_id": data["auth_chain_id"],
-                "entity_id": data["entity_id"],
-                "description": descriptions.get(data["entity_id"]),
+                "chain_id": data.chain_id,
+                "auth_chain_id": data.auth_chain_id,
+                "entity_id": data.entity_id,
+                "description": descriptions.get(data.entity_id),
                 "external_ref": self.get_external_ref(key),
                 "refseq_id": self.get_refseq_id(key),
                 "sequence_length": length,
-                "reference_length": data["reference_length"],
-                "mapped_residues": data["mapped_residues"],
-                "mapping_fraction": round(data["mapped_residues"] / length, 3) if length else 0.0,
+                "reference_length": data.reference_length,
+                "mapped_residues": data.mapped_residues,
+                "mapping_fraction": round(data.mapped_residues / length, 3) if length else 0.0,
             })
         return pd.DataFrame(rows)
