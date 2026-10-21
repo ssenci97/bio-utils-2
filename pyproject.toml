@@ -15,6 +15,7 @@ dependencies = [
     "mdtraj",
     "matplotlib",
     "pyyaml",
+    "requests",
     "tqdm",
     "ipython",
 ]

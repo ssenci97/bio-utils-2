@@ -6,6 +6,13 @@ from Bio.Data.PDBData import nucleic_letters_3to1_extended
 from Bio.PDB.Polypeptide import protein_letters_3to1_extended
 
 RCSB_URL = "https://files.rcsb.org/download/{}.cif"
+RCSB_SEARCH_URL = "https://search.rcsb.org/rcsbsearch/v2/query"
+RCSB_GRAPHQL_URL = "https://data.rcsb.org/graphql"
+RCSB_RETURN_TYPES = ("entry", "assembly", "polymer_entity", "non_polymer_entity", "polymer_instance", "mol_definition")
+PUB_COLUMNS = [
+    "pdb_id", "citation_id", "is_primary", "title", "authors", "journal", "volume",
+    "page_first", "page_last", "year", "doi", "pubmed_id",
+]
 CONTACTS_CUTOFF_NM = 0.8
 DEFAULT_CONTACT_TYPE = "inter"
 CONTACT_TYPES = ("inter", "intra", "all")
