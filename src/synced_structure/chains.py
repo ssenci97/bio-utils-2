@@ -63,8 +63,9 @@ class ChainMixin:
         data["resid_to_ref_index"] = {residues[seq_index].id: ref_index for seq_index, ref_index in index_mapping.items()}
         data["mapped_residues"] = len(index_mapping)
 
-    def _make_chain_data(self, chain, reference_sequence=None, entity_id=None, metadata=None, external_ref=None):
-        """Build the data dict for a chain, with its key, standard ID, author ID, and optional external reference.
+    def _make_chain_data(self, chain, reference_sequence=None, entity_id=None, metadata=None, external_ref=None,
+                         refseq_id=None):
+        """Build the data dict for a chain, with its key, standard ID, author ID, and optional external and reference sequence IDs.
 
         Args:
             chain: Biopython Chain object, keyed by its chain key.
@@ -72,6 +73,7 @@ class ChainMixin:
             entity_id: Entity ID, or None to resolve it automatically.
             metadata: Optional dict of user metadata.
             external_ref: User-set external reference, or None to use the mmCIF reference.
+            refseq_id: User-set reference sequence ID, or None to fall back to the external reference.
         """
         key = str(chain.id)
         polymer, hetero = split_residues(chain)
@@ -83,6 +85,7 @@ class ChainMixin:
             "auth_chain_id": self._auth_of(key),
             "entity_id": self._resolve_entity(key, entity_id),
             "external_ref": external_ref,
+            "refseq_id": refseq_id,
             "residues": [residue for residue, _ in polymer],
             "moieties": [moiety for _, moiety in polymer],
             "hetero": hetero,
@@ -96,7 +99,7 @@ class ChainMixin:
         return data
 
     def _build_chains(self):
-        """Rebuild chain data from the model, preserving reference, entity, metadata, and external reference of existing chains."""
+        """Rebuild chain data from the model, preserving reference, entity, metadata, external reference, and reference sequence ID of existing chains."""
         previous = self.chains
         rebuilt = {}
         for chain in self.model.get_chains():
@@ -108,6 +111,7 @@ class ChainMixin:
                 entity_id=old.get("entity_id"),
                 metadata=old.get("metadata"),
                 external_ref=old.get("external_ref"),
+                refseq_id=old.get("refseq_id"),
             )
         self.chains = rebuilt
         self._interface_cache.clear()
@@ -165,6 +169,26 @@ class ChainMixin:
         """
         chain_id = self._require_chain(chain_id)
         self.chains[chain_id]["external_ref"] = None if external_ref is None else str(external_ref)
+        return self
+
+    def get_refseq_id(self, chain_id):
+        """Return the ID of the reference sequence of a chain: the user-set value if present, else the external reference.
+
+        Args:
+            chain_id: Chain identifier, standard or author.
+        """
+        data = self.chains[self._require_chain(chain_id)]
+        return data["refseq_id"] or self.get_external_ref(chain_id)
+
+    def set_refseq_id(self, chain_id, refseq_id):
+        """Set the ID of a chain's reference sequence, which may differ from its external reference, and return self.
+
+        Args:
+            chain_id: Chain identifier, standard or author.
+            refseq_id: Reference sequence ID, or None to fall back to the external reference.
+        """
+        chain_id = self._require_chain(chain_id)
+        self.chains[chain_id]["refseq_id"] = None if refseq_id is None else str(refseq_id)
         return self
 
     def set_chain_metadata(self, chain_id, key, value):
@@ -448,7 +472,7 @@ class ChainMixin:
 ###################################### SUMMARY
 
     def summary(self):
-        """Return a summary DataFrame with standard and author chain IDs, entity, description, external reference, and mapping coverage."""
+        """Return a summary DataFrame with standard and author chain IDs, entity, description, external reference, reference sequence ID, and mapping coverage."""
         descriptions = self._entity_descriptions()
         rows = []
         for key, data in self.chains.items():
@@ -459,6 +483,7 @@ class ChainMixin:
                 "entity_id": data["entity_id"],
                 "description": descriptions.get(data["entity_id"]),
                 "external_ref": self.get_external_ref(key),
+                "refseq_id": self.get_refseq_id(key),
                 "sequence_length": length,
                 "reference_length": data["reference_length"],
                 "mapped_residues": data["mapped_residues"],

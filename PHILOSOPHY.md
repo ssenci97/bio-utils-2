@@ -35,12 +35,13 @@ Attributes: `structure`, `model`, `structure_id`, `file_format`, `mmcif_dict`, `
 | Method | Purpose |
 |---|---|
 | `chain_ids` *(property)* | Loaded chain keys |
-| `summary()` | Label/author IDs, entity, description, external ref, coverage |
+| `summary()` | Label/author IDs, entity, description, external ref, refseq ID, coverage |
 | `get_sequence(chain_id)` / `get_reference_sequence(chain_id)` | Observed / reference sequence |
 | `set_reference_sequence(chain_id, sequence, remap=True)` | Replace one reference |
 | `set_reference_sequences(sequences, remap=True)` | Replace several references from `{chain: seq}` |
 | `remap_chain(chain_id)` / `remap_all_chains()` | Rebuild mappings |
 | `get_external_ref(chain_id)` / `set_external_ref(chain_id, ref)` | Accession (for example UniProt) |
+| `get_refseq_id(chain_id)` / `set_refseq_id(chain_id, ref)` | ID of the reference sequence; falls back to the external ref |
 | `set_entity_id(chain_id, entity_id)` / `set_chain_metadata(chain_id, key, value)` | Annotate a chain |
 | `add_chain(chain, reference_sequence=None, entity_id=None, metadata=None, replace=False)` | Add a chain |
 | `replace_chain(chain_id, chain, ...)` / `remove_chain(chain_id)` | Replace or remove a chain |
