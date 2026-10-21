@@ -37,7 +37,8 @@ DEFAULT_CONFIG = {
 PALETTE = ["#ECDE90", "#93DEB6", "#F1B584", "#76BBE2", "#DA919B",
            "#899E64", "#8E81B9", "#A66C58", "#30767A", "#7A5271"]
 SUPPORTED_SUFFIXES = {".pdb", ".cif", ".mmcif"}
-EXPORT_SUFFIX = ".csv"
+EXPORT_SUFFIX = ".tsv"
+EXPORT_SEP = "\t"
 KEY_MODES = ("auth", "label")
 
 MOIETY_PROTEIN = "protein"
@@ -72,6 +73,8 @@ ION_RESNAMES = frozenset({
 })
 REPRESENTATIVE_ATOMS = {MOIETY_PROTEIN: ("CA",), MOIETY_NUCLEIC: ("C4'", "C1'", "P")}
 BACKBONE_ATOMS = frozenset({"N", "CA", "C", "O", "OXT"})
+# phosphate atoms of a nucleotide; sugar atoms are recognized by a prime or asterisk in the name
+NUCLEIC_PHOSPHATE_ATOMS = frozenset({"P", "OP1", "OP2", "OP3", "O1P", "O2P", "O3P"})
 
 ANGSTROM_PER_NM = 10.0
 COORD_BLOCK_ROWS = 256

@@ -10,11 +10,26 @@ import pandas as pd
 
 from .constants import (
     ANGSTROM_PER_NM, BACKBONE_ATOMS, CONTACT_COLUMNS, CONTACT_SCHEMES, CONTACT_SEQUENCE_COLUMNS, CONTACT_TYPES,
-    CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, DEFAULT_CONTACT_TYPE, MD_SCHEMES, MOIETIES, MOIETY_PROTEIN,
+    CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, DEFAULT_CONTACT_TYPE, EXPORT_SEP, MD_SCHEMES, MOIETIES,
+    MOIETY_NUCLEIC, MOIETY_PROTEIN, NUCLEIC_PHOSPHATE_ATOMS,
 )
 from .residues import is_heavy, representative_coord
 
 ###################################### CONTACT ARGUMENTS
+
+
+def _sidechain_atoms(residue, moiety):
+    """Return the heavy sidechain atoms of a protein residue or the heavy base atoms of a nucleotide.
+
+    Returns an empty list for other moieties and for residues without such atoms, such as glycine.
+    """
+    if moiety == MOIETY_PROTEIN:
+        backbone = lambda name: name in BACKBONE_ATOMS
+    elif moiety == MOIETY_NUCLEIC:
+        backbone = lambda name: name in NUCLEIC_PHOSPHATE_ATOMS or "'" in name or "*" in name
+    else:
+        return []
+    return [atom for atom in residue.get_atoms() if not backbone(atom.get_id().strip()) and is_heavy(atom)]
 
 
 def _check_contact_args(cutoff, contact_type, scheme, moieties):
@@ -75,8 +90,9 @@ class ContactMixin:
         """Build a one-frame MDTraj trajectory in nm with one mdtraj residue per record.
 
         With 'ca', each residue is one atom named CA at its contact point, whatever its moiety. With
-        'sidechain', protein residues contribute their heavy sidechain atoms (CA for Gly) and other
-        moieties one CP atom at their contact point.
+        'sidechain', protein residues contribute their heavy sidechain atoms and nucleotides their heavy base
+        atoms; residues without such atoms (such as Gly) and other moieties contribute one CP atom at their
+        contact point.
 
         Args:
             records: Records from _contact_records.
@@ -91,9 +107,8 @@ class ContactMixin:
                 md_chains[record["key"]] = topology.add_chain(chain_id=record["key"])
             md_residue = topology.add_residue(record["resname"], md_chains[record["key"]], resSeq=record["resnum"])
             residue = record["residue"]
-            if scheme == "sidechain" and record["moiety"] == MOIETY_PROTEIN:
-                atoms = [atom for atom in residue.get_atoms()
-                         if atom.get_id().strip() not in BACKBONE_ATOMS and is_heavy(atom)] or [residue["CA"]]
+            atoms = _sidechain_atoms(residue, record["moiety"]) if scheme == "sidechain" else []
+            if atoms:
                 for atom in atoms:
                     letters = "".join(char for char in atom.get_id() if char.isalpha())
                     symbol = (atom.element or letters[:1] or "C").strip().capitalize()
@@ -126,8 +141,8 @@ class ContactMixin:
             cutoff: Distance cutoff in nm.
             contact_type: 'inter', 'intra', or 'all'.
             chain_ids: Chains to include, or None for all.
-            scheme: 'ca' (one contact point per residue) or 'sidechain' (protein sidechain atoms plus one
-                contact point per other moiety).
+            scheme: 'ca' (one contact point per residue) or 'sidechain' (protein sidechain and nucleotide base
+                atoms, plus one contact point per other residue).
             moieties: Biomolecule types to include, from MOIETIES. Hetero residues have no sequence index.
         """
         _check_contact_args(cutoff, contact_type, scheme, moieties)
@@ -243,10 +258,10 @@ class ContactMixin:
 
     def export_contact_sequences(self, output_path, cutoff=CONTACTS_CUTOFF_NM, contact_type=DEFAULT_CONTACT_TYPE,
                                  reference=False, scheme="ca", moieties=DEFAULT_CONTACT_MOIETIES):
-        """Write each chain's sequence and contact string to a CSV file and return its path.
+        """Write each chain's sequence and contact string to a TSV file and return its path.
 
         Args:
-            output_path: Destination CSV path.
+            output_path: Destination TSV path.
             cutoff: Distance cutoff in nm.
             contact_type: Contact type.
             reference: Whether to use reference sequences, skipping chains without one.
@@ -277,5 +292,5 @@ class ContactMixin:
                 "cutoff_nm": cutoff,
             })
         output_path = self._prepare_path(output_path)
-        pd.DataFrame(rows, columns=CONTACT_SEQUENCE_COLUMNS).to_csv(output_path, index=False)
+        pd.DataFrame(rows, columns=CONTACT_SEQUENCE_COLUMNS).to_csv(output_path, sep=EXPORT_SEP, index=False)
         return output_path

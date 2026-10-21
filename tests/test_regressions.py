@@ -85,6 +85,14 @@ def test_energy_per_partner_is_nan_when_contact_cutoff_exceeds_score_cutoff(tmp_
 
 # contact plots
 
+def test_sidechain_scheme_maps_base_pairs_of_dna_duplex(sync):
+    # 1AAY strands B and C pair B(i) with C(12 - i); C4' backbone points are farther apart than 0.4 nm
+    assert np.isnan(sync.contact_matrix("B", "C", 0.4, scheme="ca")["matrix"]).all()
+    rows, cols = np.nonzero(~np.isnan(sync.contact_matrix("B", "C", 0.4, scheme="sidechain")["matrix"]))
+    assert len(rows) > 0
+    assert set((rows + cols).tolist()) <= {10, 11, 12}
+
+
 def test_multi_plot_refuses_more_pairs_than_colors(sync):
     for index, new_id in enumerate(["X", "Y", "W"]):
         clone = copy.deepcopy(sync["A"].chain)

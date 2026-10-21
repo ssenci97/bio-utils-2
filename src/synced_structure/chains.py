@@ -13,7 +13,8 @@ import pandas as pd
 
 from .alignment import query_coverage
 from .constants import (
-    ANGSTROM_PER_NM, CONTACTS_CUTOFF_NM, COORD_BLOCK_ROWS, DEFAULT_CONTACT_MOIETIES, MATCH_COLUMNS, RENAME_COLUMNS,
+    ANGSTROM_PER_NM, CONTACTS_CUTOFF_NM, COORD_BLOCK_ROWS, DEFAULT_CONTACT_MOIETIES, MATCH_COLUMNS, MOIETIES,
+    RENAME_COLUMNS,
 )
 from .residues import split_residues
 from .sequence import clean_sequence, residue_to_letter
@@ -529,15 +530,21 @@ class ChainMixin:
 ###################################### SUMMARY
 
     def summary(self):
-        """Return a summary DataFrame with standard and author chain IDs, entity, description, external reference, reference sequence ID, and mapping coverage."""
+        """Return a summary DataFrame with standard and author chain IDs, entity, polymer moiety, description, external reference, reference sequence ID, and mapping coverage.
+
+        The moiety column names the biomolecule types of the chain's polymer residues, joined with '+' when mixed,
+        or of its other residues when it has no polymer.
+        """
         descriptions = self._entity_descriptions()
         rows = []
         for key, data in self.chains.items():
             length = data.sequence_length
+            present = set(data.moieties) or {moiety for _, moiety in data.hetero}
             rows.append({
                 "chain_id": data.chain_id,
                 "auth_chain_id": data.auth_chain_id,
                 "entity_id": data.entity_id,
+                "moiety": "+".join(moiety for moiety in MOIETIES if moiety in present),
                 "description": descriptions.get(data.entity_id),
                 "external_ref": self.get_external_ref(key),
                 "refseq_id": self.get_refseq_id(key),

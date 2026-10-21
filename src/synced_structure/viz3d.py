@@ -45,6 +45,11 @@ ANGLES_JS = (
     "var h=Math.atan2(2*(w*z+x*y),1-2*(y*y+z*z));"
     "return [r,p,h].map(function(t){return Math.round(t*180/Math.PI)});})"
 )
+VIZ_PAGE_TEMPLATE = """<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title></head>
+<body style="margin:16px;background:white">__BODY__</body></html>
+"""
 VIZ_TEMPLATE = """<div id="__ELEMENT__" style="position:relative;width:__SIZE__px;height:__SIZE__px"><div id="__ELEMENT__-view" style="width:100%;height:100%"></div>__OVERLAY__</div>
 <script>
 (function(){

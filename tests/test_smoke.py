@@ -23,7 +23,9 @@ def test_chains_and_moieties(sync):
     assert sync.get_sequence("B") == "AGCGTGGGCGT"
     assert set(sync.moiety_summary["moiety"]) == {"protein", "nucleic", "ion", "water"}
     assert sync.chains_by_moiety("nucleic") == ["A", "B"]
-    assert sync.summary()["mapping_fraction"].eq(1.0).all()
+    summary = sync.summary()
+    assert summary["mapping_fraction"].eq(1.0).all()
+    assert dict(zip(summary["chain_id"], summary["moiety"])) == {"B": "nucleic", "C": "protein", "A": "nucleic"}
     assert sync.get_external_ref("B") == "1AAY"
 
 
@@ -42,8 +44,9 @@ def test_contacts_and_strings(sync, tmp_path):
     assert {"protein", "nucleic"} <= set(contacts["moiety_1"]) | set(contacts["moiety_2"])
     assert contacts.loc[contacts["moiety_2"] == "ion", "sequence_index_2"].isna().all()
     assert "1" in sync.get_contact_sequence("B")
-    path = sync.export_contact_sequences(tmp_path / "out" / "strings.csv", reference=True)
+    path = sync.export_contact_sequences(tmp_path / "out" / "strings.tsv", reference=True)
     assert path.is_file()
+    assert "\t" in path.read_text().splitlines()[0]
     assert sync.chain_contact_partners() == {"A": ["B", "C"], "B": ["A"], "C": ["A"]}
 
 
@@ -87,13 +90,17 @@ def test_plots_and_exports(sync, tmp_path):
     assert pdf.is_file()
     assert build_panel_grid([lambda ax: ax.plot([0, 1])]).axes
     for export in (sync.export_chains, sync.export_residues, sync.export_moieties, sync.export_alignment_stats):
-        assert export(outdir=tmp_path).parent == tmp_path
+        path = export(outdir=tmp_path)
+        assert path.parent == tmp_path and path.suffix == ".tsv"
+        assert "\t" in path.read_text().splitlines()[0]
 
 
 def test_viz_and_config(sync, tmp_path):
     views = [sync.show_structure_3d(title="all"), sync.show_structure_3d(style="stick")]
     assert views[0].data != views[1].data
     assert "<div" in side_by_side(*views).data
+    page = sync.export_structure_3d(outdir=tmp_path, title="all").read_text()
+    assert page.startswith("<!doctype html>") and "3Dmol" in page and "<title>all</title>" in page
     config = tmp_path / "config.yaml"
     config.write_text("synced_structure:\n  save_outdir: elsewhere\n")
     loaded = SyncedStructure.from_path(CIF, config_path=config)
