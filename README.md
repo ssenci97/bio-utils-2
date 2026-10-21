@@ -76,7 +76,7 @@ s.show_structure_3d(style="cartoon")              # 3D view in Jupyter
 hits = search_rcsb(organisms=["Homo sapiens"], keywords=["hemoglobin"], resolution_max=2.0)
 ```
 
-A full worked example is in [`examples/hemoglobin_4hhb.ipynb`](examples/hemoglobin_4hhb.ipynb).
+A full worked example, the STAT6-DNA complex 5D39, is in [`examples/stat6_dna_5d39.ipynb`](examples/stat6_dna_5d39.ipynb).
 
 ## Configuration
 

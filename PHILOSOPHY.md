@@ -97,7 +97,7 @@ search_rcsb(organisms=None, keywords=None, title_contains=None, keywords_field=N
             return_type="entry", max_rows=10000, return_all_hits=False,
             include_computational=False, sort_by="score", sort_direction="desc", timeout=30)
 search_rcsb_pubs(df, id_col="pdb_id", primary_only=True, merge=True, batch_size=200, timeout=30)
-build_panel_grid(plot_funcs, sizes=3.5, ncols=2, panel_labels=True, main_title=None, wspace=0.5, hspace=0.5)
+build_panel_grid(plot_funcs, sizes=3.0, ncols=2, panel_labels=True, main_title=None, wspace=0.06, hspace=0.06)
 export_panels_pdf(grids, outdir, filename=..., raster=True, dpi=..., **grid_kwargs)
 side_by_side(*outputs, gap_px=...)
 ```

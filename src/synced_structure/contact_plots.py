@@ -3,22 +3,22 @@
 ###################################### IMPORTS AND CONSTANTS
 
 import itertools
-import math
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import ListedColormap
 from matplotlib.patches import Patch, Rectangle
+from matplotlib.transforms import ScaledTranslation
 
 from .constants import COMPLETE_MIN_SEPARATION, CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES
 from .plot_style import (
-    CONTACT_AXIS_TITLE_RATIO, CONTACT_FONT_MAX_PT, CONTACT_FONT_MIN_PT, CONTACT_FONT_PT_PER_IN, CONTACT_GRAY_CMAP,
-    CONTACT_GRAY_FACTOR, CONTACT_HIST_BINS, CONTACT_LEGEND_ROW_RATIO, CONTACT_MAP_BACKGROUND, CONTACT_MAP_CMAP,
+    CONTACT_FONT_MAX_PT, CONTACT_FONT_MIN_PT, CONTACT_FONT_PT_PER_IN, CONTACT_GRAY_CMAP,
+    CONTACT_GRAY_FACTOR, CONTACT_HIST_BINS, CONTACT_MAP_BACKGROUND, CONTACT_MAP_CMAP,
     CONTACT_MAP_COLOR, CONTACT_MAP_DPI, CONTACT_MAP_MIN_MARKER_PT, CONTACT_MAP_N_TICKS, CONTACT_MAP_SIZE_IN,
     CONTACT_MAP_STYLES, CONTACT_MAP_TICK_STEP, CONTACT_MAP_VALUES, CONTACT_MULTI_SIZE_IN, CONTACT_PANEL_LINE_COLORS,
-    CONTACT_PANEL_SIZE_IN, CONTACT_SUPTITLE_RATIO, CONTACT_TICK_BLOCK_RATIO, CONTACT_TICK_RATIO, CONTACT_TITLE_RATIO,
-    COLORBAR_FRACTION, COLORBAR_PAD, MAP_FILL_FRACTION, MULTI_BOX_COLOR, MULTI_BOX_LW, MULTI_INTRA_COLOR,
+    CONTACT_PANEL_SIZE_IN, CONTACT_SUPTITLE_RATIO, CONTACT_TICK_RATIO, CONTACT_TITLE_RATIO,
+    COLORBAR_PAD, COLORBAR_WIDTH, LEGEND_GAP_RATIO, MAP_FILL_FRACTION, MULTI_BOX_COLOR, MULTI_BOX_LW, MULTI_INTRA_COLOR,
     MULTI_PAIR_COLORS, MULTI_TRACK_OFFSET, PLDDT_BAND_EDGES, PLDDT_BANDS, PLDDT_MISSING_COLOR, POINTS_PER_INCH,
 )
 
@@ -32,18 +32,27 @@ def _font_size(size_in, font_size=None):
     return float(np.clip(CONTACT_FONT_PT_PER_IN * size_in, CONTACT_FONT_MIN_PT, CONTACT_FONT_MAX_PT))
 
 
-def _legend_offset(size_in, font_size, n_entries, ncol):
-    """Return the legend anchor in axes coordinates, placed below tick labels and the axis title.
+def _below_axis_transform(ax, gap_pt):
+    """Return a transform for anchors in axes coordinates, shifted down past the x tick labels and title by gap_pt.
 
-    Args:
-        size_in: Map width and height in inches.
-        font_size: Base font size in points.
-        n_entries: Number of legend entries.
-        ncol: Number of legend columns.
+    The shift is measured on the drawn x axis in points, so it holds when a layout engine resizes the axes.
     """
-    n_rows = math.ceil(n_entries / ncol)
-    below_pt = font_size * (CONTACT_TICK_BLOCK_RATIO + CONTACT_AXIS_TITLE_RATIO + CONTACT_LEGEND_ROW_RATIO * n_rows)
-    return -below_pt / (size_in * POINTS_PER_INCH * MAP_FILL_FRACTION)
+    fig = ax.figure
+    renderer = fig.canvas.get_renderer()
+    ax.apply_aspect()
+    xaxis_box = ax.xaxis.get_tightbbox(renderer)
+    below_px = ax.get_window_extent(renderer).y0 - xaxis_box.y0 if xaxis_box is not None else 0.0
+    shift_in = (below_px * POINTS_PER_INCH / fig.dpi + gap_pt) / POINTS_PER_INCH
+    return ax.transAxes + ScaledTranslation(0, -shift_in, fig.dpi_scale_trans)
+
+
+def _attached_colorbar(ax, mappable, label, font_size):
+    """Draw a colorbar flush against the right edge of ax, matching the height of its fixed-aspect box."""
+    cax = ax.inset_axes([1 + COLORBAR_PAD, 0, COLORBAR_WIDTH, 1])
+    colorbar = ax.figure.colorbar(mappable, cax=cax)
+    colorbar.set_label(label, fontsize=font_size)
+    colorbar.ax.tick_params(labelsize=font_size * CONTACT_TICK_RATIO)
+    return colorbar
 
 
 def _marker_points(map_size_in, n_cols, n_rows, min_marker_pt):
@@ -115,16 +124,17 @@ def _multi_masks(matrix, sizes, pairs, cutoff, min_separation):
     return gray, colored
 
 
-def _multi_legend(ax, names, pairs, pair_colors, intra_color, plddt, size_in, font_size):
+def _multi_legend(ax, names, pairs, pair_colors, intra_color, plddt, font_size):
     """Draw the legend of intra-chain, chain-pair, and optional pLDDT colors on a multi-chain map."""
     handles = [Patch(facecolor=intra_color, label="intra-chain")]
     handles += [Patch(facecolor=pair_colors[pair_idx], label=f"{names[i]}-{names[j]}")
                 for pair_idx, (i, j) in enumerate(pairs)]
     if plddt:
         handles += [Patch(facecolor=color, label=f"pLDDT {label}") for label, color in PLDDT_BANDS]
-    ax.legend(handles=handles, loc="upper center",
-              bbox_to_anchor=(0.5, _legend_offset(size_in, font_size, len(handles), 2)), ncol=2,
-              fontsize=font_size, frameon=False)
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0),
+              bbox_transform=_below_axis_transform(ax, font_size * LEGEND_GAP_RATIO), ncol=2,
+              fontsize=font_size, frameon=False, borderaxespad=0, borderpad=0,
+              handlelength=1.0, handletextpad=0.4, columnspacing=1.0)
 
 
 def _draw_multi_boundaries(ax, offsets, sizes, n_total, box_color, box_lw):
@@ -276,9 +286,7 @@ class ContactPlotMixin:
         mappable = self._paint(ax, matrix, gray_matrix, value, style, background, color, cmap,
                                cutoff, gray_cutoff, marker_pt)
         if mappable is not None and value == "distance":
-            colorbar = ax.figure.colorbar(mappable, ax=ax, fraction=COLORBAR_FRACTION, pad=COLORBAR_PAD)
-            colorbar.set_label("min distance (nm)", fontsize=font_size)
-            colorbar.ax.tick_params(labelsize=font_size * CONTACT_TICK_RATIO)
+            _attached_colorbar(ax, mappable, "min distance (nm)", font_size)
         x_ticks, x_tick_labels = self._tick_labels(chain_b, n_cols, tick_step, n_ticks)
         y_ticks, y_tick_labels = self._tick_labels(chain_a, n_rows, tick_step, n_ticks)
         self._style_axes(ax, x_ticks, x_tick_labels, y_ticks, y_tick_labels, show_ticks=show_ticks, tick_size=tick_size,
@@ -359,7 +367,7 @@ class ContactPlotMixin:
         else:
             matrix = self.contact_matrix(chain_a, chain_b, cutoff, moieties, scheme)["matrix"]
         if ax is None:
-            fig, ax = plt.subplots(figsize=(size_in, size_in), dpi=dpi)
+            fig, ax = plt.subplots(figsize=(size_in, size_in), dpi=dpi, layout="constrained")
         else:
             fig = ax.figure
         self._draw_pair(
@@ -442,7 +450,7 @@ class ContactPlotMixin:
         colors = [intra_color] + list(pair_colors[:len(pairs)])
 
         if ax is None:
-            fig, ax = plt.subplots(figsize=(size_in, size_in), dpi=dpi)
+            fig, ax = plt.subplots(figsize=(size_in, size_in), dpi=dpi, layout="constrained")
         else:
             fig = ax.figure
         margin = MULTI_TRACK_OFFSET + 0.5 if plddt else 0.5
@@ -470,11 +478,9 @@ class ContactPlotMixin:
         ax.set_title(title or f"Contacts {'-'.join(names)} (cutoff {cutoff} nm)", fontsize=font_size * CONTACT_TITLE_RATIO)
 
         if show_color_legend:
-            _multi_legend(ax, names, pairs, pair_colors, intra_color, plddt, size_in, font_size)
+            _multi_legend(ax, names, pairs, pair_colors, intra_color, plddt, font_size)
         if show_distance_legend:
-            colorbar = fig.colorbar(background_scatter, ax=ax, fraction=COLORBAR_FRACTION, pad=COLORBAR_PAD)
-            colorbar.set_label("distance (nm)", fontsize=font_size)
-            colorbar.ax.tick_params(labelsize=font_size * CONTACT_TICK_RATIO)
+            _attached_colorbar(ax, background_scatter, "distance (nm)", font_size)
         if save_path is not None:
             fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
         return fig, ax
@@ -554,7 +560,7 @@ class ContactPlotMixin:
         keys = list(dict.fromkeys((chain_a, chain_b)))
         stats = self._statistics_from_contacts(contacts, moieties, chain_keys=keys)
 
-        fig, axes = plt.subplots(2, 2, figsize=(size_in, size_in), dpi=dpi)
+        fig, axes = plt.subplots(2, 2, figsize=(size_in, size_in), dpi=dpi, layout="constrained")
         ax_map, ax_dist, ax_profile, ax_sep = axes.ravel()
         self._draw_pair(
             ax_map, pair["matrix"], chain_a, chain_b, value="contact", style=style, background=background,
@@ -588,7 +594,6 @@ class ContactPlotMixin:
         for ax in (ax_dist, ax_profile, ax_sep):
             ax.tick_params(labelsize=font_size * CONTACT_TICK_RATIO)
         fig.suptitle(f"Contact summary {name_a}-{name_b} (cutoff {cutoff} nm)", fontsize=font_size * CONTACT_SUPTITLE_RATIO)
-        fig.tight_layout()
         if save_path is not None:
             fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
         return fig, axes
