@@ -10,6 +10,7 @@ import io
 import json
 import math
 import time
+import uuid
 from html import escape
 
 from Bio.PDB import MMCIFIO
@@ -18,7 +19,8 @@ from IPython.display import HTML
 from .constants import PALETTE
 from .utils import deprecated_method, log_completion, log_info
 
-VIZ_SIZE_PX = 400
+VIZ_SIZE_PX = 500
+VIZ_PANEL_SIZE_PX = 350
 VIZ_BACKGROUND = "white"
 VIZ_STYLES = ("cartoon", "stick", "sphere", "line")
 VIZ_FORMAT = "cif"
@@ -50,7 +52,7 @@ VIZ_PAGE_TEMPLATE = """<!doctype html>
 <title>__TITLE__</title></head>
 <body style="margin:16px;background:white">__BODY__</body></html>
 """
-VIZ_TEMPLATE = """<div id="__ELEMENT__" style="position:relative;width:__SIZE__px;height:__SIZE__px"><div id="__ELEMENT__-view" style="width:100%;height:100%"></div>__OVERLAY__</div>
+VIZ_TEMPLATE = """<div id="__ELEMENT__" class="viz3d-view" style="position:relative;width:__SIZE__px;height:__SIZE__px"><div id="__ELEMENT__-view" style="width:100%;height:100%"></div>__OVERLAY__</div>
 <script>
 (function(){
 var id="__ELEMENT__",text=__TEXT__,pal=__PALETTE__,pose=__POSE__;
@@ -246,7 +248,7 @@ class Viz3DMixin:
         html = self._viewer_html(angles, chain_id, palette, style, background, size, show_angles,
                                  viz_format, js_url, label_js, angles_js, angles_font_px)
         if title:
-            heading = (f'<div style="width:{size}px;margin:0 auto 4px auto;text-align:center;font-family:sans-serif;'
+            heading = (f'<div class="viz3d-title" style="width:{size}px;margin:0 auto 4px auto;text-align:center;font-family:sans-serif;'
                        f'font-size:{title_font_px}px;font-weight:bold">{escape(str(title))}</div>')
             html = heading + html
         log_completion(start, f"Rendered view of {self.structure_id} at angles {tuple(angles)}")
@@ -257,14 +259,22 @@ class Viz3DMixin:
 ###################################### LAYOUT
 
 
-def side_by_side(*outputs, gap_px=SIDE_BY_SIDE_GAP_PX):
+def side_by_side(*outputs, gap_px=SIDE_BY_SIDE_GAP_PX, size_px=VIZ_PANEL_SIZE_PX):
     """Return one HTML object that places several show_structure_3d outputs in a row, wrapping if the notebook is narrow.
+
+    Every view is shown as a size_px square panel, whatever size it was rendered at. The viewers are built after
+    3Dmol.js loads, so they take the panel size.
 
     Args:
         *outputs: HTML objects returned by show_structure_3d, in left-to-right order.
         gap_px: Horizontal and vertical spacing between views in pixels.
+        size_px: Width and height of each panel in pixels.
     """
     if not outputs:
         raise ValueError("side_by_side needs at least one view.")
+    grid_id = f"viz3d-panels-{uuid.uuid4().hex[:8]}"
+    style = (f"<style>#{grid_id} .viz3d-view{{width:{size_px}px !important;height:{size_px}px !important}}"
+             f"#{grid_id} .viz3d-title{{width:{size_px}px !important}}</style>")
     cells = "".join(f'<div style="flex:0 0 auto">{output.data}</div>' for output in outputs)
-    return HTML(f'<div style="display:flex;flex-wrap:wrap;align-items:flex-start;gap:{gap_px}px">{cells}</div>')
+    return HTML(f'{style}<div id="{grid_id}" style="display:flex;flex-wrap:wrap;align-items:flex-start;'
+                f'gap:{gap_px}px">{cells}</div>')

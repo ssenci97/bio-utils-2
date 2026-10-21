@@ -1,72 +1,90 @@
-"""Download the STAT6-DNA complex 5D39 and export every table (TSV), figure (PDF, PNG, SVG), and 3D view (HTML).
+"""Download adenylyl cyclase 9 bound to Gαs (6R3Q) and export every table (TSV), contact maps (PDF), and a 3D view (HTML).
 
 Run from anywhere with:  python examples/export_all.py
-Outputs land in examples/output/.
+
+Outputs land in examples/output/:
+    tables/     every table as TSV
+    figures/    contact maps as PDF, each page exactly the size it was drawn at
+    structure/  interactive 3D view as standalone HTML
 """
 
 from pathlib import Path
 
 from synced_structure import SyncedStructure, export_panels_pdf
 
-PDB_ID = "5D39"
-TITLE = "STAT6-DNA complex 5D39"
+PDB_ID = "6R3Q"
 OUTDIR = Path(__file__).resolve().parent / "output"
-FORMATS = ("pdf", "png", "svg")
+TABLES, FIGURES, STRUCTURE = (OUTDIR / name for name in ("tables", "figures", "structure"))
+CUTOFF_NM = 0.8                 # C-alpha contacts drawn in color
+SIDECHAIN_CUTOFF_NM = 0.45      # closest heavy-atom contacts drawn in color
+GRAY_FACTOR = 2.0               # residue pairs up to this many cutoffs drawn in gray behind the contacts
+GRID_CUTOFFS_NM = (0.6, 0.8, 1.0)
 
 ###################################### LOAD
 
 s = SyncedStructure.from_rcsb(PDB_ID)
-OUTDIR.mkdir(parents=True, exist_ok=True)
-paths = []
+for folder in (TABLES, FIGURES, STRUCTURE):
+    folder.mkdir(parents=True, exist_ok=True)
 
-summary_path = OUTDIR / f"{PDB_ID}_summary.txt"
-summary_path.write_text(s.summary().to_string() + "\n")
-paths.append(summary_path)
-
-# Interacting chain pairs, each listed once
-partners = s.chain_contact_partners()
-pairs = sorted({tuple(sorted((a, b))) for a, chains in partners.items() for b in chains})
+# Contact statistics report label chain IDs; plots take chain keys (author IDs by default)
+key_of = {record.chain_id: key for key, record in s.chains.items()}
+summary = s.summary()
+stats = s.contact_statistics()
+inter = stats["pairs"].query("contact_type == 'inter'")
+inter_pairs = [(key_of[a], key_of[b]) for a, b in zip(inter["chain_a"], inter["chain_b"])]
+polymers = [key_of[row.chain_id] for row in summary.itertuples() if row.moiety in ("protein", "nucleic")]
 
 ###################################### TABLES (TSV)
 
-paths += [
-    s.export_chains(outdir=OUTDIR),
-    s.export_residue_mapping(outdir=OUTDIR),
-    s.export_residues(outdir=OUTDIR),
-    s.export_moieties(outdir=OUTDIR),
-    s.export_alignment_stats(outdir=OUTDIR),
-    s.export_alignment_positions(outdir=OUTDIR),
-    s.export_interface_complex(pairs, outdir=OUTDIR),
-    s.export_interface_residues(pairs, outdir=OUTDIR),
-    s.export_contact_sequences(OUTDIR / f"{PDB_ID}_contact_sequences.tsv"),
-    s.export_contact_sequences(OUTDIR / f"{PDB_ID}_contact_sequences_reference.tsv", reference=True),
+summary_path = TABLES / f"{PDB_ID}_summary.tsv"
+summary.to_csv(summary_path, sep="\t", index=False)
+tables = [
+    summary_path,
+    s.export_chains(outdir=TABLES),
+    s.export_residue_mapping(outdir=TABLES),
+    s.export_residues(outdir=TABLES),
+    s.export_moieties(outdir=TABLES),
+    s.export_alignment_stats(outdir=TABLES),
+    s.export_alignment_positions(outdir=TABLES),
+    s.export_interface_complex(inter_pairs, outdir=TABLES),
+    s.export_interface_residues(inter_pairs, outdir=TABLES),
+    s.export_contact_sequences(TABLES / f"{PDB_ID}_contact_sequences.tsv"),
+    s.export_contact_sequences(TABLES / f"{PDB_ID}_contact_sequences_reference.tsv", reference=True),
 ]
-for key, frame in s.contact_statistics().items():
-    path = OUTDIR / f"{PDB_ID}_contact_stats_{key}.tsv"
+for key, frame in stats.items():
+    path = TABLES / f"{PDB_ID}_contact_stats_{key}.tsv"
     frame.to_csv(path, sep="\t", index=False)
-    paths.append(path)
+    tables.append(path)
 
-###################################### FIGURES (PDF, PNG, SVG)
+###################################### FIGURES (PDF)
 
+chains = "_".join(polymers)
 figures = {
-    "contacts_multi_A_C": lambda: s.plot_contacts_multi(("A", "C"), show_color_legend=True),
-    "contact_map_N_M_sidechain": lambda: s.plot_contact_map("N", "M", scheme="sidechain", n_ticks=None, tick_step=5),
-    "contact_map_A": lambda: s.plot_contact_map("A"),
-    "contact_panel_A_N": lambda: s.plot_contact_panel("A", "N"),
+    # all chains on one map: intra-chain contacts in gray, the interface in color
+    f"contacts_{chains}": lambda: s.plot_contacts_multi(
+        polymers, cutoff=CUTOFF_NM, gray_cutoff=CUTOFF_NM * GRAY_FACTOR, size_in=3.5,
+        show_color_legend=True, show_distance_legend=True),
+    # same map at side-chain resolution
+    f"contacts_{chains}_sidechain": lambda: s.plot_contacts_multi(
+        polymers, cutoff=SIDECHAIN_CUTOFF_NM, gray_cutoff=SIDECHAIN_CUTOFF_NM * GRAY_FACTOR, scheme="sidechain",
+        size_in=3.5, show_color_legend=True, show_distance_legend=True),
 }
+figure_paths = []
 for name, plot in figures.items():
-    paths += s.export_plot(plot, name, outdir=OUTDIR, formats=FORMATS)
+    figure_paths += s.export_plot(plot, name, outdir=FIGURES)
 
-# One multi-page PDF: a contact map per interacting pair, four per page
-maps = [lambda ax, a=a, b=b: s.plot_contact_map(a, b, ax=ax) for a, b in pairs]
-pages = [(maps[i:i + 4], f"{TITLE}: inter-chain contacts") for i in range(0, len(maps), 4)]
-paths.append(export_panels_pdf(pages, OUTDIR, filename=f"{PDB_ID}_panels.pdf"))
+# How the interface grows with the cutoff, one panel per cutoff
+maps = [lambda ax, c=c: s.plot_contacts_multi(polymers, cutoff=c, gray_cutoff=c * GRAY_FACTOR, size_in=3.5, ax=ax)
+        for c in GRID_CUTOFFS_NM]
+figure_paths.append(export_panels_pdf([(maps, f"{PDB_ID} contacts by cutoff")], FIGURES,
+                                      filename=f"{PDB_ID}_contacts_by_cutoff.pdf",
+                                      sizes=3.5, ncols=len(GRID_CUTOFFS_NM)))
 
-###################################### 3D VIEWS (HTML)
+###################################### 3D VIEW (HTML)
 
-paths.append(s.export_structure_3d(outdir=OUTDIR, title=TITLE))
-paths.append(s.export_structure_3d("structure_3d_stick", outdir=OUTDIR, title=f"{TITLE} (sticks)", style="stick"))
+structure_paths = [s.export_structure_3d(outdir=STRUCTURE, title=f"Adenylyl cyclase 9 – Gαs ({PDB_ID})")]
 
-print(f"Wrote {len(paths)} files to {OUTDIR}:")
-for path in paths:
-    print(f"  {Path(path).name}")
+for folder, paths in ((TABLES, tables), (FIGURES, figure_paths), (STRUCTURE, structure_paths)):
+    print(f"{folder.relative_to(OUTDIR.parent)}/")
+    for path in paths:
+        print(f"  {Path(path).name}")

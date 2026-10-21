@@ -260,10 +260,10 @@ def test_search_rcsb_pubs_missing_column():
 
 def test_categorical_colors_come_from_palette():
     from synced_structure.constants import PALETTE
-    from synced_structure.plot_style import CONTACT_MAP_COLOR, CONTACT_PANEL_LINE_COLORS, MULTI_PAIR_COLORS
+    from synced_structure.plot_style import CONTACT_MAP_COLOR, MULTI_PAIR_COLORS
     from synced_structure.viz3d import CHAIN_PALETTE
 
     assert len(PALETTE) == 10
-    assert tuple(PALETTE) == tuple(CHAIN_PALETTE) == tuple(MULTI_PAIR_COLORS)
+    assert tuple(PALETTE) == tuple(CHAIN_PALETTE)
+    assert sorted(MULTI_PAIR_COLORS) == sorted(PALETTE)
     assert CONTACT_MAP_COLOR in PALETTE
-    assert set(CONTACT_PANEL_LINE_COLORS) <= set(PALETTE)

@@ -1,4 +1,4 @@
-"""Contact map plots: pair maps with grayscale background contacts, multi-chain block maps with chain outlines and optional pLDDT tracks, and a summary panel."""
+"""Contact map plots: pair maps with grayscale background contacts, optionally cropped to the interface, and multi-chain block maps with chain outlines and optional pLDDT tracks."""
 
 ###################################### IMPORTS AND CONSTANTS
 
@@ -9,17 +9,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import ListedColormap
 from matplotlib.patches import Patch, Rectangle
+from matplotlib.ticker import MaxNLocator
 from matplotlib.transforms import ScaledTranslation
 
 from .constants import COMPLETE_MIN_SEPARATION, CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES
 from .plot_style import (
-    CONTACT_FONT_MAX_PT, CONTACT_FONT_MIN_PT, CONTACT_FONT_PT_PER_IN, CONTACT_GRAY_CMAP,
-    CONTACT_GRAY_FACTOR, CONTACT_HIST_BINS, CONTACT_MAP_BACKGROUND, CONTACT_MAP_CMAP,
-    CONTACT_MAP_COLOR, CONTACT_MAP_DPI, CONTACT_MAP_MIN_MARKER_PT, CONTACT_MAP_N_TICKS, CONTACT_MAP_SIZE_IN,
-    CONTACT_MAP_STYLES, CONTACT_MAP_TICK_STEP, CONTACT_MAP_VALUES, CONTACT_MULTI_SIZE_IN, CONTACT_PANEL_LINE_COLORS,
-    CONTACT_PANEL_SIZE_IN, CONTACT_SUPTITLE_RATIO, CONTACT_TICK_RATIO, CONTACT_TITLE_RATIO,
+    AXIS_LW, CONTACT_CROP_PAD, CONTACT_FONT_MAX_PT, CONTACT_FONT_MIN_PT, CONTACT_FONT_PT_PER_IN, CONTACT_GRAY_CMAP,
+    CONTACT_GRAY_FACTOR, CONTACT_MAP_BACKGROUND, CONTACT_MAP_CMAP, CONTACT_MAP_COLOR, CONTACT_MAP_DPI,
+    CONTACT_MAP_MIN_MARKER_PT, CONTACT_MAP_N_TICKS, CONTACT_MAP_SIZE_IN, CONTACT_MAP_STYLES, CONTACT_MAP_TICK_STEP,
+    CONTACT_MAP_VALUES, CONTACT_MAX_ASPECT, CONTACT_MULTI_SIZE_IN, CONTACT_TICK_RATIO, CONTACT_TITLE_RATIO,
     COLORBAR_PAD, COLORBAR_WIDTH, LEGEND_GAP_RATIO, MAP_FILL_FRACTION, MULTI_BOX_COLOR, MULTI_BOX_LW, MULTI_INTRA_COLOR,
-    MULTI_PAIR_COLORS, MULTI_TRACK_OFFSET, PLDDT_BAND_EDGES, PLDDT_BANDS, PLDDT_MISSING_COLOR, POINTS_PER_INCH,
+    MULTI_PAIR_COLORS, MULTI_TICK_MIN_GAP, MULTI_TICK_SPACING_EM, MULTI_TRACK_OFFSET, PLDDT_BAND_EDGES, PLDDT_BANDS, PLDDT_MISSING_COLOR,
+    POINTS_PER_INCH, TICK_CHAR_EM, TICK_LENGTH_PT, TICK_STEPS,
 )
 
 ###################################### LAYOUT HELPERS
@@ -51,7 +52,8 @@ def _attached_colorbar(ax, mappable, label, font_size):
     cax = ax.inset_axes([1 + COLORBAR_PAD, 0, COLORBAR_WIDTH, 1])
     colorbar = ax.figure.colorbar(mappable, cax=cax)
     colorbar.set_label(label, fontsize=font_size)
-    colorbar.ax.tick_params(labelsize=font_size * CONTACT_TICK_RATIO)
+    colorbar.ax.tick_params(labelsize=font_size * CONTACT_TICK_RATIO, length=TICK_LENGTH_PT, width=AXIS_LW)
+    colorbar.outline.set_linewidth(AXIS_LW)
     return colorbar
 
 
@@ -67,25 +69,47 @@ def _gray_limit(cutoff, gray_cutoff):
     return max(gray_cutoff, cutoff)
 
 
-def _tick_positions(n, tick_step, n_ticks):
-    """Return tick positions along an axis of n residues: n_ticks evenly spread, or every tick_step residues.
+def _tick_positions(numbers, tick_step, n_ticks):
+    """Return the positions along an axis whose residue numbers are round: about n_ticks, or multiples of tick_step.
 
     Args:
-        n: Number of positions along the axis.
-        tick_step: Spacing in residues, used when n_ticks is None.
-        n_ticks: Number of ticks per axis, or None.
+        numbers: Residue number at each position along the axis.
+        tick_step: Residue-number spacing, used when n_ticks is None.
+        n_ticks: Approximate number of ticks, or None.
     """
-    if n <= 0:
+    numbers = np.asarray(numbers, dtype=int)
+    if numbers.size == 0:
         return np.array([], dtype=int)
+    low, high = numbers.min(), numbers.max()
     if n_ticks is not None:
         if n_ticks < 1:
             raise ValueError("n_ticks must be at least 1.")
-        if n_ticks == 1:
-            return np.array([0], dtype=int)
-        return np.unique(np.linspace(0, n - 1, int(n_ticks)).round().astype(int))
-    if tick_step < 1:
-        raise ValueError("tick_step must be at least 1.")
-    return np.arange(0, n, tick_step)
+        values = MaxNLocator(nbins=int(n_ticks), steps=TICK_STEPS, integer=True).tick_values(low, high)
+    else:
+        if tick_step < 1:
+            raise ValueError("tick_step must be at least 1.")
+        values = np.arange(-(-low // tick_step) * tick_step, high + 1, tick_step)
+    first = {}
+    for position, number in enumerate(numbers):
+        first.setdefault(number, position)
+    positions = sorted({first[int(v)] for v in values if int(v) == v and int(v) in first})
+    return np.array(positions or [0], dtype=int)
+
+
+def _crop_window(mask, n, pad):
+    """Return (start, stop) around the True entries of a 1D mask, padded by pad and clamped to 0..n, or the full axis."""
+    hits = np.flatnonzero(mask)
+    if hits.size == 0:
+        return 0, n
+    return max(int(hits[0]) - pad, 0), min(int(hits[-1]) + pad + 1, n)
+
+
+def _resolve_aspect(aspect, n_rows, n_cols):
+    """Return 'equal' unless the map is more elongated than CONTACT_MAX_ASPECT, then 'auto'; explicit values pass."""
+    if aspect is not None:
+        return aspect
+    ratio = max(n_rows, n_cols) / max(min(n_rows, n_cols), 1)
+    return "auto" if ratio > CONTACT_MAX_ASPECT else "equal"
 
 
 def plddt_colors(values):
@@ -132,7 +156,7 @@ def _multi_legend(ax, names, pairs, pair_colors, intra_color, plddt, font_size):
     if plddt:
         handles += [Patch(facecolor=color, label=f"pLDDT {label}") for label, color in PLDDT_BANDS]
     ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0),
-              bbox_transform=_below_axis_transform(ax, font_size * LEGEND_GAP_RATIO), ncol=2,
+              bbox_transform=_below_axis_transform(ax, font_size * LEGEND_GAP_RATIO), ncol=min(4, len(handles)),
               fontsize=font_size, frameon=False, borderaxespad=0, borderpad=0,
               handlelength=1.0, handletextpad=0.4, columnspacing=1.0)
 
@@ -140,15 +164,16 @@ def _multi_legend(ax, names, pairs, pair_colors, intra_color, plddt, font_size):
 def _draw_multi_boundaries(ax, offsets, sizes, n_total, box_color, box_lw):
     """Draw dashed chain boundaries and a thin square around each chain of a multi-chain map."""
     boundaries = offsets[1:] - 0.5
-    ax.hlines(boundaries, -0.5, n_total - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
-    ax.vlines(boundaries, -0.5, n_total - 0.5, colors=box_color, linestyles="--", linewidth=box_lw, zorder=3)
+    dashes = (0, (3, 2))
+    ax.hlines(boundaries, -0.5, n_total - 0.5, colors=box_color, linestyles=dashes, linewidth=box_lw, zorder=3)
+    ax.vlines(boundaries, -0.5, n_total - 0.5, colors=box_color, linestyles=dashes, linewidth=box_lw, zorder=3)
     for start, length in zip(offsets, sizes):
         ax.add_patch(Rectangle((start - 0.5, start - 0.5), length, length, fill=False,
                                edgecolor=box_color, linewidth=box_lw, zorder=3))
 
 
 class ContactPlotMixin:
-    """Contact maps, multi-chain block maps, and the 2x2 contact summary panel."""
+    """Contact maps and multi-chain block maps."""
 
     def _residue_bfactor_as_plddt(self, chain_key):
         """Return per-residue pLDDT for a chain from the C-alpha B-factor (atom mean otherwise), NaN where missing.
@@ -169,18 +194,27 @@ class ContactPlotMixin:
         """Return the quoted author chain ID used in plot text, such as 'A'."""
         return f"'{self.chains[chain_key].auth_chain_id}'"
 
-    def _tick_labels(self, chain_key, n, tick_step, n_ticks=None):
-        """Return tick positions and residue-number labels for one axis.
+    def _pair_title(self, chain_a, chain_b, cutoff):
+        """Return the default title of a pair map: chain 'A' contacts, or 'A'–'B' contacts, with the cutoff."""
+        names = (f"Chain {self._quoted_auth_id(chain_a)}" if chain_a == chain_b
+                 else f"{self._quoted_auth_id(chain_a)}–{self._quoted_auth_id(chain_b)}")
+        return f"{names} contacts (≤ {cutoff:g} nm)"
+
+    def _tick_labels(self, chain_key, start, stop, tick_step, n_ticks=None):
+        """Return tick positions and residue-number labels for the positions start..stop-1 of one axis.
+
+        Ticks fall on round author residue numbers, so they read naturally whatever the numbering offset.
 
         Args:
             chain_key: Chain key whose residue numbers label the ticks.
-            n: Number of positions along the axis.
-            tick_step: Spacing between ticks in sequence positions, used when n_ticks is None.
-            n_ticks: Number of ticks along the axis, or None.
+            start, stop: Visible window of sequence positions.
+            tick_step: Residue-number spacing of ticks, used when n_ticks is None.
+            n_ticks: Approximate number of ticks along the window, or None.
         """
         residues = self.chains[chain_key].residues
-        positions = _tick_positions(n, tick_step, n_ticks)
-        return positions, [str(residues[p].id[1]) if p < len(residues) else str(p + 1) for p in positions]
+        numbers = [residues[p].id[1] if p < len(residues) else p + 1 for p in range(start, stop)]
+        positions = _tick_positions(numbers, tick_step, n_ticks)
+        return positions + start, [str(numbers[p]) for p in positions]
 
     @staticmethod
     def _style_axes(ax, x_ticks, x_tick_labels, y_ticks, y_tick_labels, *, show_ticks, tick_size, tick_rotation,
@@ -200,11 +234,14 @@ class ContactPlotMixin:
         if show_ticks:
             ax.set_xticks(x_ticks, x_tick_labels)
             ax.set_yticks(y_ticks, y_tick_labels)
-            ax.tick_params(labelsize=tick_size if tick_size is not None else font_size * CONTACT_TICK_RATIO)
+            ax.tick_params(labelsize=tick_size if tick_size is not None else font_size * CONTACT_TICK_RATIO,
+                           direction="out", length=TICK_LENGTH_PT, width=AXIS_LW)
             ax.tick_params(axis="x", labelrotation=tick_rotation)
         else:
             ax.set_xticks([])
             ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_linewidth(AXIS_LW)
         ax.set_xlabel(xlabel, fontsize=font_size)
         ax.set_ylabel(ylabel, fontsize=font_size)
 
@@ -237,7 +274,8 @@ class ContactPlotMixin:
                 return ax.imshow(np.ma.masked_invalid(np.where(np.isnan(matrix), np.nan, 1.0)),
                                  cmap=ListedColormap([color]), vmin=0, vmax=1, interpolation="nearest")
             colormap = mpl.colormaps[cmap].copy()
-            colormap.set_bad(background)
+            # transparent gaps let the grayscale background show through
+            colormap.set_bad(background if gray_matrix is None else (0, 0, 0, 0))
             return ax.imshow(np.ma.masked_invalid(matrix), cmap=colormap, vmin=0, vmax=cutoff, interpolation="nearest")
         marker_area = marker_pt ** 2
         if gray_matrix is not None:
@@ -254,8 +292,8 @@ class ContactPlotMixin:
     def _draw_pair(self, ax, matrix, chain_a, chain_b, *, value, style, background, color, cmap,
                    cutoff, font_size, tick_step, min_marker_pt, map_size_in, title,
                    gray_matrix=None, gray_cutoff=None, n_ticks=None, show_ticks=True,
-                   tick_size=None, tick_rotation=0, xlabel=None, ylabel=None):
-        """Draw a pair contact map on ax with a fixed aspect ratio and quoted chain-ID axis titles.
+                   tick_size=None, tick_rotation=0, xlabel=None, ylabel=None, crop=False, aspect=None):
+        """Draw a pair contact map on ax with quoted chain-ID axis titles, optionally cropped to the contacts.
 
         Args:
             ax: Matplotlib Axes.
@@ -276,19 +314,28 @@ class ContactPlotMixin:
             tick_rotation: X tick label rotation in degrees.
             xlabel: X-axis title, or None for the quoted chain ID of chain_b.
             ylabel: Y-axis title, or None for the quoted chain ID of chain_a.
+            crop: Whether to limit both axes to the residues in contact, padded by CONTACT_CROP_PAD.
+            aspect: 'equal', 'auto', or None for 'equal' unless the window is more elongated than CONTACT_MAX_ASPECT.
         """
         n_rows, n_cols = matrix.shape
+        row_start, row_stop, col_start, col_stop = 0, n_rows, 0, n_cols
+        if crop:
+            close = ~np.isnan(matrix)
+            row_start, row_stop = _crop_window(close.any(axis=1), n_rows, CONTACT_CROP_PAD)
+            col_start, col_stop = _crop_window(close.any(axis=0), n_cols, CONTACT_CROP_PAD)
+        n_visible_rows, n_visible_cols = row_stop - row_start, col_stop - col_start
         ax.set_facecolor(background)
-        ax.set_xlim(-0.5, n_cols - 0.5)
-        ax.set_ylim(n_rows - 0.5, -0.5)
-        ax.set_aspect("equal", adjustable="box")
-        marker_pt = _marker_points(map_size_in, n_cols, n_rows, min_marker_pt)
+        marker_pt = _marker_points(map_size_in, n_visible_cols, n_visible_rows, min_marker_pt)
         mappable = self._paint(ax, matrix, gray_matrix, value, style, background, color, cmap,
                                cutoff, gray_cutoff, marker_pt)
+        # imshow resets limits and aspect, so both are applied after painting
+        ax.set_xlim(col_start - 0.5, col_stop - 0.5)
+        ax.set_ylim(row_stop - 0.5, row_start - 0.5)
+        ax.set_aspect(_resolve_aspect(aspect, n_visible_rows, n_visible_cols), adjustable="box")
         if mappable is not None and value == "distance":
             _attached_colorbar(ax, mappable, "min distance (nm)", font_size)
-        x_ticks, x_tick_labels = self._tick_labels(chain_b, n_cols, tick_step, n_ticks)
-        y_ticks, y_tick_labels = self._tick_labels(chain_a, n_rows, tick_step, n_ticks)
+        x_ticks, x_tick_labels = self._tick_labels(chain_b, col_start, col_stop, tick_step, n_ticks)
+        y_ticks, y_tick_labels = self._tick_labels(chain_a, row_start, row_stop, tick_step, n_ticks)
         self._style_axes(ax, x_ticks, x_tick_labels, y_ticks, y_tick_labels, show_ticks=show_ticks, tick_size=tick_size,
                          tick_rotation=tick_rotation, xlabel=xlabel or self._quoted_auth_id(chain_b),
                          ylabel=ylabel or self._quoted_auth_id(chain_a), font_size=font_size)
@@ -311,12 +358,14 @@ class ContactPlotMixin:
                          size_in=CONTACT_MAP_SIZE_IN, font_size=None,
                          tick_step=CONTACT_MAP_TICK_STEP, n_ticks=CONTACT_MAP_N_TICKS, show_ticks=True,
                          tick_size=None, tick_rotation=0, xlabel=None, ylabel=None,
-                         min_marker_pt=CONTACT_MAP_MIN_MARKER_PT,
+                         min_marker_pt=CONTACT_MAP_MIN_MARKER_PT, crop=False, aspect=None,
                          dpi=CONTACT_MAP_DPI, title=None, ax=None, save_path=None, matrix=None):
-        """Plot a fixed-aspect contact map for one chain or a chain pair, with each axis titled by its chain ID.
+        """Plot a contact map for one chain or a chain pair, with each axis titled by its chain ID.
 
-        With value 'contact' and gray True, every residue pair up to gray_cutoff is drawn in light gray,
-        darker when closer, and contacts within cutoff are drawn on top in color.
+        With gray True, every residue pair up to gray_cutoff is drawn in light gray, darker when closer,
+        and contacts within cutoff are drawn on top in color, or colored by distance when value is 'distance'. Ticks fall on round
+        author residue numbers. With crop True the map zooms onto the residues in contact, which makes
+        sparse inter-chain interfaces readable.
 
         Args:
             chain_a: Chain on the y-axis, standard or author ID.
@@ -333,14 +382,17 @@ class ContactPlotMixin:
             cmap: Colormap name when value is 'distance'.
             size_in: Figure width and height in inches.
             font_size: Base font size in points, or None to scale with size_in.
-            tick_step: Spacing of residue-number ticks, used when n_ticks is None.
-            n_ticks: Number of ticks per axis, spread evenly along each chain. Overrides tick_step.
+            tick_step: Residue-number spacing of ticks, used when n_ticks is None.
+            n_ticks: Approximate number of ticks per axis, on round residue numbers. Overrides tick_step.
             show_ticks: Whether to draw tick marks and labels.
             tick_size: Tick label font size, or None for a fixed share of font_size.
             tick_rotation: X tick label rotation in degrees.
             xlabel: X-axis title, or None for the quoted chain ID of chain_b.
             ylabel: Y-axis title, or None for the quoted chain ID of chain_a.
             min_marker_pt: Smallest marker side in points for the scatter style.
+            crop: Whether to zoom onto the residues in contact within cutoff, padded by CONTACT_CROP_PAD.
+            aspect: 'equal', 'auto', or None for 'equal' unless the visible map is more elongated than
+                CONTACT_MAX_ASPECT, as for protein-DNA pairs.
             dpi: Figure resolution.
             title: Optional title, or None for a default.
             ax: Existing Matplotlib Axes to draw on, or None to create a figure.
@@ -357,7 +409,7 @@ class ContactPlotMixin:
         font_size = _font_size(size_in, font_size)
         chain_a, chain_b, _, _ = self._resolve_pair(chain_a, chain_b)
         gray_matrix = None
-        if gray and value == "contact":
+        if gray:
             gray_cutoff = _gray_limit(cutoff, gray_cutoff)
             gray_matrix = self.contact_matrix(chain_a, chain_b, gray_cutoff, moieties, scheme)["matrix"]
         if matrix is not None:
@@ -374,12 +426,12 @@ class ContactPlotMixin:
             ax, matrix, chain_a, chain_b, value=value, style=style, background=background, color=color,
             cmap=cmap, cutoff=cutoff, font_size=font_size, tick_step=tick_step,
             min_marker_pt=min_marker_pt, map_size_in=size_in,
-            title=title or f"Contacts {self._quoted_auth_id(chain_a)}-{self._quoted_auth_id(chain_b)} (cutoff {cutoff} nm)",
+            title=title or self._pair_title(chain_a, chain_b, cutoff),
             gray_matrix=gray_matrix, gray_cutoff=gray_cutoff, n_ticks=n_ticks, show_ticks=show_ticks,
-            tick_size=tick_size, tick_rotation=tick_rotation, xlabel=xlabel, ylabel=ylabel,
+            tick_size=tick_size, tick_rotation=tick_rotation, xlabel=xlabel, ylabel=ylabel, crop=crop, aspect=aspect,
         )
         if save_path is not None:
-            fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
+            fig.savefig(save_path, dpi=dpi)
         return fig, ax
 
     def plot_contacts_multi(self, chain_ids=("A", "B"), cutoff=CONTACTS_CUTOFF_NM,
@@ -395,7 +447,7 @@ class ContactPlotMixin:
                             dpi=CONTACT_MAP_DPI, title=None, ax=None, save_path=None):
         """Plot several chains on one block contact map, with dashed chain boundaries and a thin square around each chain.
 
-        Each axis lists the chains' residues in order. Every residue pair up to gray_cutoff is drawn in
+        Each axis lists the chains' residues in order, and the chain IDs label the blocks along the top. Every residue pair up to gray_cutoff is drawn in
         grayscale by distance. Within cutoff, intra-chain contacts are drawn in intra_color and
         inter-chain contacts in one color per chain pair, in itertools.combinations order. If plddt is
         True, AlphaFold pLDDT bands are drawn along the top and left edges.
@@ -415,13 +467,13 @@ class ContactPlotMixin:
             min_separation: Smallest sequence separation kept for intra-chain contacts.
             size_in: Figure width and height in inches, or None for a size by number of chains.
             font_size: Base font size in points, or None to scale with size_in.
-            tick_step: Spacing of residue-number ticks, used when n_ticks is None.
-            n_ticks: Number of ticks per chain. Overrides tick_step.
+            tick_step: Residue-number spacing of ticks, used when n_ticks is None.
+            n_ticks: Approximate number of ticks per chain, on round residue numbers. Overrides tick_step.
             show_ticks: Whether to draw tick marks and labels.
             tick_size: Tick label font size, or None for a fixed share of font_size.
             tick_rotation: X tick label rotation in degrees.
-            xlabel: X-axis title, or None for the quoted chain IDs.
-            ylabel: Y-axis title, or None for the quoted chain IDs.
+            xlabel: X-axis title, or None for 'residue'.
+            ylabel: Y-axis title, or None for 'residue'.
             min_marker_pt: Smallest marker side in points.
             show_color_legend: Whether to draw the legend of intra-chain, chain-pair, and pLDDT colors.
             show_distance_legend: Whether to draw the grayscale distance colorbar.
@@ -470,19 +522,26 @@ class ContactPlotMixin:
             self._draw_plddt_tracks(ax, keys, n_total, marker_area)
         _draw_multi_boundaries(ax, offsets, sizes, n_total, box_color, box_lw)
 
-        ticks, tick_labels = self._multi_ticks(keys, offsets, sizes, tick_step, n_ticks)
-        default_axis = " | ".join(names)
+        tick_pt = tick_size if tick_size is not None else font_size * CONTACT_TICK_RATIO
+        positions_per_pt = n_total / (size_in * MAP_FILL_FRACTION * POINTS_PER_INCH)
+        ticks, tick_labels = self._multi_ticks(keys, offsets, sizes, tick_step, n_ticks, tick_pt * positions_per_pt)
         self._style_axes(ax, ticks, tick_labels, ticks, tick_labels, show_ticks=show_ticks,
                          tick_size=tick_size, tick_rotation=tick_rotation,
-                         xlabel=xlabel or default_axis, ylabel=ylabel or default_axis, font_size=font_size)
-        ax.set_title(title or f"Contacts {'-'.join(names)} (cutoff {cutoff} nm)", fontsize=font_size * CONTACT_TITLE_RATIO)
+                         xlabel=xlabel or "residue", ylabel=ylabel or "residue", font_size=font_size)
+        # chains too short to fit their ID stay unlabeled rather than overlapping a neighbor
+        shown = [i for i, n in enumerate(sizes) if n >= MULTI_TICK_MIN_GAP * n_total]
+        chain_axis = ax.secondary_xaxis("top")
+        chain_axis.set_xticks([offsets[i] + (sizes[i] - 1) / 2 for i in shown], [names[i] for i in shown])
+        chain_axis.tick_params(length=0, labelsize=font_size)
+        chain_axis.spines["top"].set_linewidth(AXIS_LW)
+        ax.set_title(title or f"{'–'.join(names)} contacts (≤ {cutoff:g} nm)", fontsize=font_size * CONTACT_TITLE_RATIO)
 
         if show_color_legend:
             _multi_legend(ax, names, pairs, pair_colors, intra_color, plddt, font_size)
         if show_distance_legend:
             _attached_colorbar(ax, background_scatter, "distance (nm)", font_size)
         if save_path is not None:
-            fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
+            fig.savefig(save_path, dpi=dpi)
         return fig, ax
 
     def _draw_plddt_tracks(self, ax, keys, n_total, marker_area):
@@ -500,100 +559,30 @@ class ContactPlotMixin:
         for x, y in ((index, track), (track, index)):
             ax.scatter(x, y, c=colors, s=marker_area, marker="s", linewidths=0, clip_on=False, zorder=2)
 
-    def _multi_ticks(self, keys, offsets, sizes, tick_step, n_ticks):
+    def _multi_ticks(self, keys, offsets, sizes, tick_step, n_ticks, em_positions):
         """Return the tick positions and residue-number labels of a multi-chain map, shared by both axes.
 
-        The first tick of each chain after the first is dropped so chain boundaries are not labelled twice.
+        A tick whose label would come closer than MULTI_TICK_SPACING_EM to the previous label is dropped, so labels
+        never collide at chain boundaries or inside short chains, whatever the figure size.
 
         Args:
             keys: Chain keys in axis order.
             offsets: Start index of each chain in the block matrix.
             sizes: Number of residues of each chain.
-            tick_step: Spacing of ticks, used when n_ticks is None.
-            n_ticks: Number of ticks per chain, or None.
+            tick_step: Residue-number spacing of ticks, used when n_ticks is None.
+            n_ticks: Approximate number of ticks per chain, or None.
+            em_positions: Width of one tick-label em in matrix positions.
         """
+        def half_width(label):
+            return len(label) * TICK_CHAR_EM * em_positions / 2
+
         ticks, tick_labels = [], []
-        for chain_index, (key, offset, n) in enumerate(zip(keys, offsets, sizes)):
-            positions, chain_labels = self._tick_labels(key, n, tick_step, n_ticks)
-            if chain_index:
-                positions, chain_labels = positions[1:], chain_labels[1:]
-            ticks.append(positions + offset)
-            tick_labels += chain_labels
-        return np.concatenate(ticks), tick_labels
-
-    def plot_contact_panel(self, chain_a="A", chain_b=None, cutoff=CONTACTS_CUTOFF_NM,
-                           moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca", style="scatter",
-                           background=CONTACT_MAP_BACKGROUND, color=CONTACT_MAP_COLOR,
-                           size_in=CONTACT_PANEL_SIZE_IN, font_size=None,
-                           tick_step=CONTACT_MAP_TICK_STEP, n_ticks=CONTACT_MAP_N_TICKS, show_ticks=True,
-                           tick_size=None, min_marker_pt=CONTACT_MAP_MIN_MARKER_PT,
-                           dpi=CONTACT_MAP_DPI, save_path=None):
-        """Plot a 2x2 summary: contact map, distance histogram, per-residue profile, and sequence separation.
-
-        Args:
-            chain_a: First chain, standard or author ID.
-            chain_b: Second chain, or None for an intra-chain summary.
-            cutoff: Distance cutoff in nm.
-            moieties: Biomolecule types to include.
-            scheme: Contact scheme, 'ca' or 'sidechain'.
-            style: Map style, 'scatter' or 'heatmap'.
-            background: Background color for the map.
-            color: Contact color for the map and histogram.
-            size_in: Figure width and height in inches.
-            font_size: Base font size in points, or None to scale with each panel's size.
-            tick_step: Spacing of residue-number ticks on the map, used when n_ticks is None.
-            n_ticks: Number of ticks per axis on the map. Overrides tick_step.
-            show_ticks: Whether to draw tick marks and labels on the map.
-            tick_size: Tick label font size on the map, or None for a fixed share of font_size.
-            min_marker_pt: Smallest marker side in points.
-            dpi: Figure resolution.
-            save_path: Optional file path to save the figure to.
-
-        Returns:
-            Tuple of (figure, axes) where axes is a 2x2 array.
-        """
-        font_size = _font_size(size_in / 2, font_size)
-        chain_a, chain_b, label_a, label_b = self._resolve_pair(chain_a, chain_b)
-        name_a, name_b = self._quoted_auth_id(chain_a), self._quoted_auth_id(chain_b)
-        pair = self.contact_matrix(chain_a, chain_b, cutoff, moieties, scheme)
-        contacts = pair["contacts"]
-        keys = list(dict.fromkeys((chain_a, chain_b)))
-        stats = self._statistics_from_contacts(contacts, moieties, chain_keys=keys)
-
-        fig, axes = plt.subplots(2, 2, figsize=(size_in, size_in), dpi=dpi, layout="constrained")
-        ax_map, ax_dist, ax_profile, ax_sep = axes.ravel()
-        self._draw_pair(
-            ax_map, pair["matrix"], chain_a, chain_b, value="contact", style=style, background=background,
-            color=color, cmap=CONTACT_MAP_CMAP, cutoff=cutoff, font_size=font_size, tick_step=tick_step,
-            min_marker_pt=min_marker_pt, map_size_in=size_in * 0.5,
-            title=f"Contacts {name_a}-{name_b}", n_ticks=n_ticks, show_ticks=show_ticks, tick_size=tick_size,
-        )
-        distances = self._pair_rows(contacts, label_a, label_b)["min_distance_nm"].to_numpy()
-        ax_dist.hist(distances, bins=CONTACT_HIST_BINS, range=(0, cutoff), color=color)
-        ax_dist.set_xlabel("min distance (nm)", fontsize=font_size)
-        ax_dist.set_ylabel("contacts", fontsize=font_size)
-        ax_dist.set_title("Contact distances", fontsize=font_size * CONTACT_TITLE_RATIO)
-
-        profile, separation = stats["profile"], stats["separation"]
-        for index, key in enumerate(keys):
-            label, name = self.chains[key].chain_id, self._quoted_auth_id(key)
-            line_color = CONTACT_PANEL_LINE_COLORS[index % len(CONTACT_PANEL_LINE_COLORS)]
-            rows = profile[(profile["chain_id"] == label) & profile["sequence_index"].notna()]
-            ax_profile.step(rows["resnum"], rows["n_contacts"], where="mid", color=line_color, label=f"chain {name}")
-            values = separation.loc[separation["chain_id"] == label, "separation"]
-            ax_sep.hist(values, bins=CONTACT_HIST_BINS, histtype="step", color=line_color, label=f"chain {name}")
-        ax_profile.set_xlabel("residue number", fontsize=font_size)
-        ax_profile.set_ylabel("contacts per residue", fontsize=font_size)
-        ax_profile.set_title("Per-residue contacts", fontsize=font_size * CONTACT_TITLE_RATIO)
-        ax_sep.set_xlabel("sequence separation |i - j|", fontsize=font_size)
-        ax_sep.set_ylabel("intra-chain contacts", fontsize=font_size)
-        ax_sep.set_title("Sequence separation", fontsize=font_size * CONTACT_TITLE_RATIO)
-        if len(keys) > 1:
-            ax_profile.legend(fontsize=font_size, frameon=False)
-            ax_sep.legend(fontsize=font_size, frameon=False)
-        for ax in (ax_dist, ax_profile, ax_sep):
-            ax.tick_params(labelsize=font_size * CONTACT_TICK_RATIO)
-        fig.suptitle(f"Contact summary {name_a}-{name_b} (cutoff {cutoff} nm)", fontsize=font_size * CONTACT_SUPTITLE_RATIO)
-        if save_path is not None:
-            fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
-        return fig, axes
+        for key, offset, n in zip(keys, offsets, sizes):
+            positions, chain_labels = self._tick_labels(key, 0, n, tick_step, n_ticks)
+            for position, label in zip(positions + offset, chain_labels):
+                min_gap = (half_width(tick_labels[-1]) + half_width(label) + MULTI_TICK_SPACING_EM * em_positions
+                           if ticks else 0)
+                if not ticks or position - ticks[-1] >= min_gap:
+                    ticks.append(position)
+                    tick_labels.append(label)
+        return np.array(ticks, dtype=int), tick_labels

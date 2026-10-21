@@ -5,13 +5,14 @@
 from html import escape
 from pathlib import Path
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pandas as pd
 from tqdm import tqdm
 
 from .constants import CHAIN_COLUMNS, EXPORT_SEP, EXPORT_SUFFIX, MAPPING_COLUMNS
 from .panels import rasterize_figure, build_panel_grid
-from .plot_style import EXPORT_DPI, FIGURE_FORMATS, PANEL_FORMATS
+from .plot_style import EXPORT_DPI, FIGURE_FORMATS, PANEL_FORMATS, PDF_RC
 from .viz3d import VIZ_PAGE_TEMPLATE
 
 ###################################### EXPORT HELPERS
@@ -40,14 +41,16 @@ class ExportMixin:
         return path
 
     def _save_figure(self, fig, stem, outdir, formats, dpi=EXPORT_DPI, rasterize_pdf=True):
-        """Save a figure in each format, rasterizing PDF collections if raster is True, close it, and return the paths."""
+        """Save a figure in each format at its exact figure size, rasterizing PDF collections if raster is True, close it,
+        and return the paths."""
         base = self._outdir(outdir) / stem
         paths = []
         for fmt in formats:
             path = base.with_name(f"{base.name}.{fmt}")
             if fmt == "pdf" and rasterize_pdf:
                 rasterize_figure(fig)
-            fig.savefig(path, dpi=dpi, bbox_inches="tight")
+            with mpl.rc_context(PDF_RC):
+                fig.savefig(path, dpi=dpi)
             paths.append(path)
         plt.close(fig)
         return paths

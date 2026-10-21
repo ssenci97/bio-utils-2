@@ -81,7 +81,7 @@ def test_plots_and_exports(sync, tmp_path):
     fig, _ = sync.plot_contact_map("A", "B")
     for chains in (("A", "B"), ("A", "B", "C")):
         sync.plot_contacts_multi(chains, plddt=True, show_color_legend=True)
-    sync.plot_contact_panel("A", "B")
+    sync.plot_contact_map("A", "B", crop=True, value="distance", style="heatmap")
     with pytest.raises(ValueError):
         sync.plot_contacts_multi(("A", "A"))
     paths = sync.export_plot(lambda: sync.plot_contact_map("A"), "map", outdir=tmp_path, formats=("png", "pdf"))

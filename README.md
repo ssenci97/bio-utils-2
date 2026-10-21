@@ -6,7 +6,7 @@ A Biopython structure wrapper that keeps every observed residue linked to its po
 
 A deposited structure is an incomplete copy of a biological sequence, not the sequence itself. Disordered loops and termini are not modelled. Author numbering is chosen by the depositors and can start anywhere, skip numbers or use insertion codes. Every chain has two IDs, an author ID and a label ID, and they often differ. Protein, nucleic acid, ligands, ions and water share the same chain records.
 
-The STAT6–DNA complex [5D39](https://www.rcsb.org/structure/5D39), used in the example script, shows all of these:
+The STAT6–DNA complex [5D39](https://www.rcsb.org/structure/5D39) shows all of these:
 
 - **Different gaps per copy.** The four STAT6 chains share one 539-residue entity sequence. A, B, C and D model 489, 484, 484 and 487 residues, and each copy misses a different set of residues. Position 100 of the observed sequence of A is therefore not the same residue as position 100 of B, and contacts or interface residues cannot be compared between copies by observed index.
 - **Three numberings for one residue.** The first modelled residue of chain A has author number 125. It is position 1 of the observed sequence and position 6 of the reference sequence.
@@ -55,7 +55,7 @@ flowchart TB
     subgraph outputs["Outputs"]
         PLOTS["contact_plots.py + panels.py<br/>contact maps, panel grids"]
         VIZ["viz3d.py<br/>3Dmol.js views"]
-        EXP["exporter.py<br/>TSV · PDF/PNG/SVG · HTML"]
+        EXP["exporter.py<br/>TSV · PDF · HTML"]
     end
 
     SEARCH["rcsb.py<br/>search_rcsb · search_rcsb_pubs"]
@@ -142,11 +142,17 @@ hits = search_rcsb(organisms=["Homo sapiens"], keywords=["hemoglobin"], resoluti
 
 ## Example script
 
-[`examples/export_all.py`](examples/export_all.py) downloads 5D39 and writes every table (TSV), several figures (PDF, PNG, SVG), a multi-page PDF of contact maps for all interacting chain pairs, and two 3D views (standalone HTML) to `examples/output/`:
+[`examples/export_all.py`](examples/export_all.py) downloads [6R3Q](https://www.rcsb.org/structure/6R3Q), adenylyl cyclase 9 (chain A, 841 of 1637 residues modelled, author numbering 97–1245) bound to Gαs (chain B), and writes to `examples/output/`:
 
 ```bash
 python examples/export_all.py
 ```
+
+| Folder | Contents |
+|---|---|
+| `tables/` | Every table as TSV: summary, chains, residue mapping, residues, moieties, alignments, interfaces, contact sequences and contact statistics |
+| `figures/` | PDFs, each page exactly the size it was drawn at, all drawn with `plot_contacts_multi`: the A–B block map with Cα contacts, the same map at side-chain resolution, and a three-panel grid showing how the interface grows with the cutoff. Residue pairs up to twice the cutoff are drawn in gray behind the contacts |
+| `structure/` | The 3D cartoon view as a standalone HTML page |
 
 ## API reference
 
@@ -216,15 +222,19 @@ contact_statistics(cutoff=..., moieties=..., scheme="ca")   # dict: pairs, profi
 
 ### Visualization
 
-`plot_contact_map(chain_a="A", chain_b=None, ...)`, `plot_contacts_multi(chain_ids=("A", "B"), ..., plddt=False, ...)`, `plot_contact_panel(chain_a="A", chain_b=None, ...)` and `show_structure_3d(angles=(0, 0, 0), chain_id=None, colors=None, title=None, style="cartoon", ...)`.
+`plot_contact_map(chain_a="A", chain_b=None, ..., crop=False, aspect=None, ...)`, `plot_contacts_multi(chain_ids=("A", "B"), ..., plddt=False, ...)` and `show_structure_3d(angles=(0, 0, 0), chain_id=None, colors=None, title=None, style="cartoon", ...)`.
+
+Ticks fall on round author residue numbers. `crop=True` zooms a pair map onto the residues in contact, which makes sparse inter-chain interfaces readable, and maps more elongated than 2.5:1 (such as protein–DNA) switch from equal to automatic aspect unless `aspect` is given.
 
 ### Export
 
 Tables are written as TSV, named `{structure_id}_{name}.tsv`. All of these take `outdir=None`, which defaults to the configured `save_outdir`:
 
 - **Tables:** `export_chains`, `export_residue_mapping(chain_ids=None)`, `export_residues`, `export_moieties`, `export_alignment_stats`, `export_alignment_positions`, `export_interface_complex(chain_pairs=None)` and `export_interface_residues(chain_pairs=None)`.
-- **Figures:** `export_plot(plot_func, name, formats=..., dpi=..., raster=True)` and `export_plot_grid(plot_funcs, name, ...)`.
+- **Figures:** `export_plot(plot_func, name, formats=("pdf",), dpi=..., raster=True)` and `export_plot_grid(plot_funcs, name, ...)`. Figures are saved at exactly their figure size (no tight cropping), with editable TrueType text in PDFs.
 - **3D view:** `export_structure_3d(name="structure_3d", title=None, **view_kwargs)` writes `show_structure_3d` as a standalone HTML page.
+
+Plots default to 3 in (3.5 in for multi-chain maps of three or more chains), and panel grids use 3 in panels. 3D views are 500 px, or 350 px each when placed side by side.
 
 ### Module-level functions
 
@@ -240,7 +250,7 @@ search_rcsb(organisms=None, keywords=None, title_contains=None, keywords_field=N
 search_rcsb_pubs(df, id_col="pdb_id", primary_only=True, merge=True, batch_size=200, timeout=30)
 build_panel_grid(plot_funcs, sizes=3.0, ncols=2, panel_labels=True, main_title=None, wspace=0.06, hspace=0.06)
 export_panels_pdf(grids, outdir, filename=..., raster=True, dpi=..., **grid_kwargs)
-side_by_side(*outputs, gap_px=...)
+side_by_side(*outputs, gap_px=..., size_px=350)          # 3D views as 350 px panels
 ```
 
 ### Deprecated aliases
