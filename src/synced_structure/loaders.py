@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Constructors that load structures from RCSB, local PDB or mmCIF files, or Biopython objects, keyed by author or label chain IDs."""
 
 ###################################### IMPORTS AND CONSTANTS
@@ -11,8 +10,8 @@ from pathlib import Path
 from Bio.PDB import MMCIFParser, PDBParser
 from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 
-from constants import DEFAULT_CONFIG_PATH, RCSB_URL, SUPPORTED_SUFFIXES, KEY_MODES
-from helpers import finish_log
+from .constants import DEFAULT_CONFIG_PATH, RCSB_URL, SUPPORTED_SUFFIXES
+from .utils import finish_log
 
 ###################################### LOADERS
 
@@ -24,7 +23,7 @@ class LoaderMixin:
 
         Args:
             pdb_id: Four-character PDB identifier.
-            config_path: Path to the YAML config file.
+            config_path: Path to the YAML config file, or None for defaults.
             key_by: 'auth' (default) keys chains by author IDs, 'label' by label IDs.
         """
         start = time.perf_counter()
@@ -44,12 +43,12 @@ class LoaderMixin:
         return obj
 
     @classmethod
-    def from_Path(cls, path, config_path=DEFAULT_CONFIG_PATH, key_by="auth"):
+    def from_path(cls, path, config_path=DEFAULT_CONFIG_PATH, key_by="auth"):
         """Load a local PDB or mmCIF file; the file stem becomes the structure and entity ID.
 
         Args:
             path: Path to a .pdb, .cif, or .mmcif file.
-            config_path: Path to the YAML config file.
+            config_path: Path to the YAML config file, or None for defaults.
             key_by: 'auth' (default) keys chains by author IDs, 'label' by label IDs.
         """
         start = time.perf_counter()
@@ -79,24 +78,25 @@ class LoaderMixin:
         return obj
 
     @classmethod
-    def from_path(cls, path, config_path=DEFAULT_CONFIG_PATH, key_by="auth"):
-        """Alias for from_Path."""
-        return cls.from_Path(path, config_path=config_path, key_by=key_by)
-
-    @classmethod
-    def from_biopython(cls, structure, structure_id=None, config_path=DEFAULT_CONFIG_PATH, key_by="auth"):
-        """Wrap an existing Biopython Structure in a SyncedStructure.
+    def from_biopython(cls, structure, structure_id=None, mmcif_dict=None, file_format="pdb",
+                       config_path=DEFAULT_CONFIG_PATH, key_by="auth"):
+        """Wrap an existing Biopython Structure in a SyncedStructure; the structure ID becomes the default entity ID.
 
         Args:
             structure: Biopython Structure object.
             structure_id: Optional ID; defaults to the structure's own ID.
-            config_path: Path to the YAML config file.
-            key_by: 'auth' (default) or 'label'.
+            mmcif_dict: Optional parsed mmCIF dict providing reference metadata.
+            file_format: Source format, 'cif' or 'pdb'.
+            config_path: Path to the YAML config file, or None for defaults.
+            key_by: 'auth' (default) or 'label'; must match how the structure was parsed.
         """
+        structure_id = str(structure_id or structure.id)
         return cls(
             structure,
-            structure_id=structure_id or structure.id,
-            file_format="pdb",
+            structure_id=structure_id,
+            mmcif_dict=mmcif_dict,
+            file_format=file_format,
             config_path=config_path,
+            default_entity_id=structure_id,
             key_by=key_by,
         )

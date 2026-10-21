@@ -10,3 +10,7 @@ data/
 .here
 3Dmol-min.js
 tutorials/
+build/
+dist/
+*.egg-info/
+!tests/data/

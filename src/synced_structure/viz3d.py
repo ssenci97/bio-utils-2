@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-"""Jupyter visualization for synchronized structures: clickable py3Dmol views using mmCIF input, with a centered title inside the view, per-chain colors, representation styles, backgrounds, sizes, rotation angles with reset and current readout buttons, and side-by-side layouts."""
+"""Jupyter visualization for synchronized structures: clickable py3Dmol views using mmCIF input, with a centered title above the view, per-chain colors, representation styles, backgrounds, sizes, rotation angles with reset and current readout buttons, and side-by-side layouts."""
 
 ###################################### IMPORTS AND CONSTANTS
 
@@ -14,7 +13,7 @@ from html import escape
 from Bio.PDB import MMCIFIO
 from IPython.display import HTML
 
-from helpers import finish_log
+from .utils import finish_log, log_info
 
 VIZ_SIZE_PX = 400
 VIZ_BACKGROUND = "white"
@@ -71,7 +70,7 @@ function readCurrent(){
 var v=box().__viewer;
 if(!v){return "loading, click again";}
 var raw=Array.prototype.slice.call(v.getView());
-console.log("[PYTHON-INFO] getView raw",raw);
+console.log("[JS-INFO] getView raw",raw);
 var a=__ANGLES__(raw.slice(4,8).map(Number));
 if(a.some(function(t){return !isFinite(t)})){return "unreadable, see console";}
 return "x "+a[0]+"\u00b0 y "+a[1]+"\u00b0 z "+a[2]+"\u00b0";
@@ -80,11 +79,11 @@ build();
 if(__SHOW__){
 document.getElementById(id+"-reset").onclick=function(){
 try{build();out().textContent=text;}
-catch(e){console.error("[PYTHON-INFO] reset failed",e);}
+catch(e){console.error("[JS-INFO] reset failed",e);}
 };
 document.getElementById(id+"-current").onclick=function(){
 try{out().textContent=readCurrent();}
-catch(e){console.error("[PYTHON-INFO] angle read failed",e);out().textContent="unreadable, see console";}
+catch(e){console.error("[JS-INFO] angle read failed",e);out().textContent="unreadable, see console";}
 };
 }
 })();
@@ -94,6 +93,7 @@ catch(e){console.error("[PYTHON-INFO] angle read failed",e);out().textContent="u
 
 
 def _quaternion(angles):
+    """Return the (x, y, z, w) quaternion of x, y, z rotations in degrees, applied in x, y, z order."""
     def axis(index, degrees):
         half = math.radians(degrees) / 2
         return tuple(math.sin(half) if j == index else 0.0 for j in range(3)) + (math.cos(half),)
@@ -120,7 +120,7 @@ class Viz3DMixin:
         colors = {str(key): value for key, value in (colors or {}).items()}
         ignored = sorted(set(colors) - set(self.chain_ids))
         if ignored:
-            print(f"[PYTHON-INFO] {self.structure_id}: colors ignored for unloaded chains {ignored}")
+            log_info(f"{self.structure_id}: colors ignored for unloaded chains {ignored}")
         return {cid: colors.get(cid, chain_palette[index % len(chain_palette)])
                 for index, cid in enumerate(self.chain_ids)}
 
@@ -182,7 +182,8 @@ class Viz3DMixin:
             angles_js: JavaScript that converts a quaternion into x, y, z degrees.
             angles_font_px: Font size of the angle overlay in pixels.
         """
-        key = (self.structure_id, tuple(angles), chain_id, sorted(palette.items()), style, background, size, show_angles)
+        key = (self.structure_id, tuple(angles), chain_id, sorted(palette.items()), style, background, size, show_angles,
+               viz_format, js_url, label_js, angles_js, angles_font_px)
         element = "viz_" + hashlib.sha1(repr(key).encode()).hexdigest()[:12]
         text = f"x {angles[0]}\u00b0 y {angles[1]}\u00b0 z {angles[2]}\u00b0"
         overlay = self._angles_overlay(element, text, angles_font_px) if show_angles else ""
@@ -205,7 +206,7 @@ class Viz3DMixin:
                  style="cartoon", background=VIZ_BACKGROUND, size=VIZ_SIZE_PX, show_angles=SHOW_ANGLES,
                  chain_palette=CHAIN_PALETTE, viz_format=VIZ_FORMAT, js_url=VIZ_JS_URL, label_js=CHAIN_LABEL_JS,
                  angles_js=ANGLES_JS, title_font_px=TITLE_FONT_PX, angles_font_px=ANGLES_FONT_PX):
-        """Show the structure in a Jupyter notebook as a clickable py3Dmol view with the centered title inside the view.
+        """Show the structure in a Jupyter notebook as a clickable py3Dmol view with an optional centered title above it.
 
         Args:
             angles: Rotation (x, y, z) in degrees, applied as the pose and displayed when show_angles is True.

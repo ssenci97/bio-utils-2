@@ -1,106 +1,116 @@
+Status after phase 1 (branch 'packaging'): package at src/synced_structure, installable with pip install -e .
+Legend: [DONE] implemented, [KEPT] reviewed and left as is on purpose, [DROPPED] obsolete, [OPEN] left for a later phase.
+Module moves: synced_structure.py -> structure.py; helpers.py -> utils.py, sequence.py, alignment.py, residues.py, contacts.py;
+contact_map.py -> contact_matrix.py, contact_stats.py, contact_plots.py, plot_style.py; exporter.py -> exporter.py, panels.py.
+Conventions: data["residues"] = polymer (protein + nucleic), data["hetero"] = ligands, ions, water; public tables 1-based, internals 0-based;
+reference_index always from the global mapping in chains._map_to_reference.
+
 chains.py
-1. Fix residue scope: stop using 'is_protein_residue' as the sole residue filter in '_make_chain_data' and '_protein_residues', so nucleic, ligand, ion, and water residues stay in 'data["residues"]', or document and enforce a single residue model across the package.
-2. Replace the unprefixed 'print' in 'remap_chain' with a [PYTHON-INFO] log line.
-3. Align 'chain_contact_partners' with contacts.py: use the same representative-coordinate definition, including ligand centroids, instead of the separate '_representative_coordinates' logic in '_chain_contact_partners'.
-4. Remove the cutoff inconsistency: use one contact cutoff constant and one unit (nm or Å) for partner detection in '_chain_contact_partners'.
-5. Make 'summary' compute the chain description map once instead of rebuilding entity maps per call through '_chain_description_map'.
-6. Move 'set_chain_metadata' and 'set_entity_id' here from metadata.py, where they belong.
-7. Document the reference-mapping convention (0-based global alignment in '_map_to_reference') and make it the only mapping used by residue tables.
+1. [DONE] Residue model is polymer + hetero; nucleic, ligand, ion, and water residues are kept (residues/hetero split via residues.split_residues).
+2. [DONE] remap_chain logs through utils.log_info.
+3. [DONE] chain_contact_partners uses the shared contact records (ContactMixin._contact_records, residues.representative_coord).
+4. [DONE] One residue contact cutoff, CONTACTS_CUTOFF_NM; the heavy-atom interface cutoffs stay in A as separately named config keys.
+5. [DONE] summary builds the entity description map once.
+6. [DONE] set_chain_metadata and set_entity_id moved here.
+7. [DONE] _map_to_reference documented as the only (0-based) mapping; residue tables report it 1-based.
 
 contacts.py
-1. Fix residue scope: '_ca_records' iterates only protein residues in 'data["residues"]', so nucleic, ligand, ion, and water contacts are never computed; align with the residue model chosen in chains.py.
-2. Add the missing '_prepare_path' helper, or remove its call in 'export_contact_sequences', which currently raises AttributeError.
-3. Move '_check_contact_args' and '_keep_pair' from helpers.py into this module.
-4. Replace the O(n²) Python pair list in 'compute_contacts' with a vectorized or block-wise pair generator to limit memory use.
-5. Merge '_make_ca_trajectory' and '_make_sidechain_trajectory' into one topology builder with a scheme switch.
-6. Use one representative-coordinate definition shared with chains.py, replacing 'representative_coord' here and '_representative_coordinates' there.
-7. Add a blank line before the section header after the imports to match the spec style.
-8. Make contact-string indexing in '_observed_bits' and 'get_reference_contact_sequence' consistent with the reference mapping used by residue tables.
+1. [DONE] _contact_records walks polymer and hetero residues.
+2. [DONE] ExportMixin._prepare_path added; export_contact_sequences no longer crashes.
+3. [DONE] _check_contact_args moved here; _keep_pair replaced by the vectorized _pair_mask.
+4. [DONE] Pair list built with np.triu_indices and a chain mask. [OPEN] Neighbor-search prefilter to avoid n^2 mdtraj pairs.
+5. [DONE] One _make_trajectory(records, scheme).
+6. [DONE] Single contact-point definition: residues.representative_coord.
+7. [DONE] Section header spacing.
+8. [DONE] Contact tables use 1-based sequence indices (NA for hetero); strings and matrices convert consistently.
 
-contact_map.py
-1. Fix residue scope: 'matrix_from_contacts' and '_checked_matrix' size matrices from 'sequence_length', which counts protein-only residues, so non-protein contacts cannot appear in maps.
-2. Merge 'plot_contacts_two', 'plot_contacts_three', and 'plot_contacts_four' into one parameterized multi-chain plot function; the three are near-copies.
-3. Replace the repeated block-matrix construction in 'complete_contacts' and the three multi-chain plot functions with one helper, and remove '_block_entries' in favor of '_multi_block_entries'.
-4. Make 'contact_matrix', 'complete_contacts', and 'plot_contact_map' return consistent types (tuple or dict, not both).
-5. Add a 'scheme' parameter to 'contact_matrix' and 'plot_contact_map', or document that they are CA-only.
-6. Share one statistics path between 'contact_statistics' and 'plot_contact_panel' so contacts are not recomputed independently.
-7. Limit '_residue_profile' in 'plot_contact_panel' to the two chains being plotted instead of all chains.
-8. Split the 1,240-line module into matrix, statistics, and plotting modules, and move plot style constants to a plot-style module.
+contact_map.py (now contact_matrix.py, contact_stats.py, contact_plots.py, plot_style.py)
+1. [DONE] Matrices size from polymer residues; nucleic contacts appear; hetero contacts are dropped from matrices only.
+2. [DONE] plot_contacts_two/three/four replaced by plot_contacts_multi(chain_ids, ...).
+3. [DONE] One _block_matrix helper; _block_entries removed.
+4. [DONE] contact_matrix and complete_contacts return dicts; plots return (fig, ax).
+5. [DONE] scheme parameter on contact_matrix, plot_contact_map, and plot_contact_panel.
+6. [DONE] contact_statistics and plot_contact_panel share _statistics_from_contacts.
+7. [DONE] Panel profile limited to the plotted chains.
+8. [DONE] Module split; plot style constants in plot_style.py.
 
 interface_metrics.py
-1. Fix 'energy_per_partner' in '_compute_interface': divide by the partner count that matches the energy sum cutoff, or sum energy over the same contact cutoff used by 'n_partners'.
-2. Unify residue classification: replace '_standard_residues' (id[0] == " ") with the package residue model so nucleic residues are handled consistently with residues.py.
-3. Make 'chain_partner_interfaces' and 'chain_partner_frame' use the configured Å cutoff (or the shared nm constant) instead of the hardcoded 'cutoff=1.2'.
-4. Reduce the six one-line accessors ('buried_area', 'initial_sasa', 'buried_fraction', 'contact_count', 'min_distance', 'contact_score') to one generic accessor or keep only the most used ones.
-5. Move '_split_partners' to a partner-utilities location shared with ensemble.py.
-6. Avoid recomputing complex SASA in '_residue_sasa' on every pair by caching per-chain SASA and reusing the copied geometry where possible.
-7. Remove the dependence on whether 'apply_reference_numbering' was run by reading from an unmodified structure copy.
+1. [DONE] energy_per_partner divides by partners within the score cutoff, matching the energy sum.
+2. [DONE] Interface residues come from data["residues"]; SASA strips residues by moiety.
+3. [DONE] chain_partner_interfaces/chain_partner_frame default to CONTACTS_CUTOFF_NM and call chain_contact_partners (was a crash).
+4. [KEPT] The six one-line accessors stay as public API.
+5. [DONE] split_partners is a module function (ensemble.py no longer exists).
+6. [KEPT] Per-chain SASA is cached; complex SASA must be computed per pair.
+7. [KEPT] The interface cache is cleared on rebuild, so resids follow the current numbering by design.
 
 residues.py
-1. Fix stored-structure deletion: '_keep_mapped' detaches all non-protein residues from the chain, which silently removes water, ligands, and nucleic acids; keep them and renumber only the mapped protein residues.
-2. Move 'residue_moiety' here from helpers.py.
-3. Use the same reference-index source as chains.py, since '_residue_frame' reports 1-based reference indices from the local alignment while '_map_to_reference' is 0-based.
-4. Rebuild 'moiety_summary' from the full chain residue set so nucleic, ligand, ion, and water counts are reported.
-5. Remove the 'to_dataframe' alias, which duplicates 'residue_map'.
-6. Compute moiety once per residue in '_residue_frame' and 'moiety_summary' instead of twice.
+1. [DONE] _keep_mapped trims and renumbers only polymer residues; hetero residues are never deleted.
+2. [DONE] residue_moiety moved here, using PROTEIN_RESNAMES and ION_RESNAMES.
+3. [DONE] reference_index comes from the global mapping, reported 1-based.
+4. [DONE] moiety_summary covers polymer and hetero residues.
+5. [DONE] to_dataframe alias removed.
+6. [DONE] Moiety computed once per residue (stored in data["moieties"]).
 
 alignment.py
-1. Move the aligner factories 'make_global_aligner' and 'make_local_aligner' here from helpers.py.
-2. Use the configured scoring weights in 'alignment_score' instead of the hardcoded 0.5 and 1.5, or document them as fixed constants in constants.py.
-3. Resolve the 1-based (local, in '_compute_local_alignment') versus 0-based (global, in chains '_map_to_reference') index convention.
-4. Clarify 'query_coverage_percent' against the coverage definition in '_pair_identity' in chains.py; they currently mean different things.
+1. [DONE] make_global_aligner and make_local_aligner moved here.
+2. [DONE] alignment_score weights named in constants.py (ALN_SCORE_MISMATCH_WEIGHT, ALN_SCORE_GAP_WEIGHT).
+3. [DONE] Local alignment no longer provides a mapping; it feeds only alignment_stats and alignment_positions.
+4. [DONE] query_coverage_percent uses one definition, alignment.query_coverage, shared with chains._pair_identity.
 
 metadata.py
-1. Move 'set_chain_metadata' and 'set_entity_id' out to chains.py, since they mutate chain records.
-2. Move '_clean_val' out of the mixin to helpers.py, since it is a generic mmCIF utility.
-3. Remove the side effect in '_chain_entity_map' that writes '_external_ref_map', or make it an explicit return value.
-4. Avoid recomputing '_chain_entity_map' inside '_chain_description_map'.
+1. [DONE] set_chain_metadata and set_entity_id moved to chains.py.
+2. [DONE] _clean_val is sequence.clean_val.
+3. [DONE] External references returned by _entity_external_refs() and stored once in __init__.
+4. [DONE] Descriptions come from _entity_descriptions() keyed by entity ID.
 
 loaders.py
-1. Fix 'from_biopython': set file_format and mmcif_dict consistently with 'from_rcsb_id' and 'from_Path', and pass default_entity_id where applicable.
-2. Move 'KEY_MODES' to constants.py.
-3. Add --yaml-in and --yaml-out support to scripts that lack it, following the pattern in 'ensemble.main'.
+1. [DONE] from_biopython takes mmcif_dict and file_format and passes default_entity_id.
+2. [DONE] KEY_MODES lives in constants.py.
+3. [DROPPED] ensemble.main no longer exists.
 
-helpers.py
-1. Split the module: config and logging ('resolve_config', 'finish_log') to utils, sequence helpers ('clean_sequence', 'cif_sequence', 'to_list') to a sequence module, aligner factories to alignment.py, 'residue_moiety' and 'is_protein_residue' to residues.py, and '_check_contact_args' and '_keep_pair' to contacts.py.
-2. Stop 'resolve_config' from writing YAML on load unless the caller explicitly requests a write (spec: do not save files unless already saved).
-3. Fix memory units in 'finish_log': use sys.platform rather than the 10**7 threshold, since Linux reports ru_maxrss in KB.
-4. Make 'clean_sequence' and 'cif_sequence' the only sequence cleaners; check 'residue_to_letter' and 'TO1' usage for duplication.
+helpers.py (removed)
+1. [DONE] Split into utils.py, sequence.py, alignment.py, residues.py, and contacts.py.
+2. [DONE] resolve_config only reads; it never writes YAML.
+3. [DONE] finish_log uses sys.platform for ru_maxrss units.
+4. [DONE] Single letter tables TO1 and NUCLEIC_TO1 used by sequence.residue_to_letter.
 
 exporter.py
-1. Split the plotting engine ('build_panel_grid', 'export_panels_pdf', '_rasterize') into a plot-layout module separate from table export.
-2. Route 'export_panels_pdf' through 'ExportMixin._outdir' instead of bypassing 'save_outdir'.
-3. Respect the dpi argument in '_save_figure' for PDF output; currently RASTER_DPI overrides it.
-4. Move plot style constants (GRID_*, EXPORT_DPI, RASTER_DPI) to the plot-style module.
+1. [DONE] Plotting engine moved to panels.py.
+2. [KEPT] export_panels_pdf is a module function with an explicit outdir; it has no structure config to read.
+3. [DONE] _save_figure respects dpi for PDF output.
+4. [DONE] Plot style constants moved to plot_style.py.
 
 ensemble.py
-1. Add the missing '_prepare_dir' helper, or remove its call in 'interface_ensemble', which currently raises AttributeError.
-2. Move 'main' and the CLI out of the mixin module into a separate entry point.
-3. Replace the broad 'except' in '_interface_job' with specific exceptions, so real bugs are not reported as skipped structures.
-4. Move the YAML read/write logic in 'main' to a shared utility also used by 'resolve_config' in helpers.py.
-5. Confirm that the partner-key format in 'add_interface_frequencies' matches the label output of '_compute_interface'.
+1-5. [DROPPED] Module removed in a76d36d.
 
 viz3d.py
-1. Include all parameters that change the rendered output (viz_format, js_url, label_js, angles_js, chain_palette) in the element hash built in '_viewer_html', so two views with the same pose cannot share an element ID.
-2. Correct the 'jupy_viz' docstring: the title renders as a heading above the view, not inside it.
-3. Correct the [PYTHON-INFO] log label used inside the JavaScript console output in VIZ_TEMPLATE.
-4. Remove the unused SEED constant, or use it consistently with constants.py.
+1. [DONE] Element hash includes every parameter that changes the rendered output.
+2. [DONE] Docstrings say the title renders above the view.
+3. [DONE] JavaScript console lines use [JS-INFO].
+4. [DROPPED] viz3d.py never had a SEED constant; SEED removed from constants.py.
 
-synced_structure.py
-1. Remove the unused imports of 'side_by_side' and 'export_panels_pdf' in 'SyncedStructure'.
-2. Combine the two imports from exporter into one line, or remove them as part of item 1.
-3. Remove '_global_aligner' from '__init__' only if it is not used by the new chain-mapping design.
+synced_structure.py (now structure.py)
+1. [DONE] side_by_side and export_panels_pdf are exported from the package __init__ instead.
+2. [DONE] Imports regrouped.
+3. [KEPT] _global_aligner is used by _map_to_reference.
 
 constants.py
-1. Resolve the cutoff unit conflict by defining one contact cutoff in one unit (nm or Å), and rename constants so the unit is in the name (for example 'DEFAULT_CUTOFF', 'interface_contact_cutoff_a').
-2. Remove the unused config keys 'chain_seqs_outdir', 'chain_refseqs_outdir', and 'aln_outdir' from 'DEFAULT_CONFIG', or wire them into the code.
-3. Remove the unused SEED constant if it is not used, or keep it as the single shared definition.
-4. Move 'KEY_MODES' here from loaders.py.
-5. Define a single residue-moiety classification constant set shared by all modules.
+1. [DONE] CONTACTS_CUTOFF_NM; A-based config keys keep the _a suffix.
+2. [DROPPED] Unused config keys were already removed.
+3. [DONE] SEED removed.
+4. [DONE] KEY_MODES lives here.
+5. [DONE] One moiety constant set (MOIETIES, POLYMER_MOIETIES, *_RESNAMES).
 
 Package-wide
-1. Convert all flat imports (for example 'from helpers import ...') to package-relative imports for installation.
-2. Replace the relative default path 'configs/param_configs.yaml' in 'DEFAULT_CONFIG_PATH' with a configurable location.
-3. Declare new external dependencies (mdtraj, numpy, tqdm, matplotlib, pyyaml, biopython, pandas, ipython) in the .toml.
-4. Add a single CLI entry point for 'ensemble' and any other script that needs one.
-5. Ensure every script that writes files does so only when an output option is given, in 'resolve_config' and 'SyncedStructure.__init__' in particular.
+1. [DONE] All imports package-relative.
+2. [DONE] DEFAULT_CONFIG_PATH is None; pass config_path to use a YAML file.
+3. [DONE] Dependencies declared in pyproject.toml.
+4. [OPEN] No CLI entry point yet (ensemble.py removed); plan in phase 2.
+5. [DONE] Nothing writes files on load; only export_* methods and explicit save paths write.
+
+Additional fixes found during the refactor
+1. [DONE] Local alignment end read from the last coordinate column, not the first gapless block (range, ref_end, sequence were truncated with gaps).
+2. [DONE] External references keyed by entity, so entities sharing an accession keep it (1AAY DNA chain A was blank).
+3. [DONE] SO4/PO4 and other ION_RESNAMES classified as ions; ION_RESNAMES was unused.
+4. [DONE] interface_all and chain_partner_frame skip empty residue frames before concat (pandas FutureWarning).
+5. [DONE] Offline tests in tests/test_smoke.py on tests/data/1AAY.cif.

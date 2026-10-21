@@ -1,23 +1,74 @@
-#!/usr/bin/env python
-"""Residue numbering, reference-index mapping, and per-residue tables with standard and author chain IDs."""
+"""Residue classification, numbering, reference-index mapping, and per-residue tables with standard and author chain IDs."""
 
 ###################################### IMPORTS AND CONSTANTS
 
 import copy
 
+import numpy as np
 import pandas as pd
 
-from constants import MAPPING_COLUMNS, MOIETIES, MOIETY_SUMMARY_COLUMNS, RESIDUE_COLUMNS
-from helpers import is_protein_residue, residue_moiety
+from .constants import (
+    ION_RESNAMES, MAPPING_COLUMNS, MOIETIES, MOIETY_ION, MOIETY_LIGAND, MOIETY_NUCLEIC, MOIETY_PROTEIN,
+    MOIETY_SUMMARY_COLUMNS, MOIETY_WATER, NUCLEIC_RESNAMES, POLYMER_MOIETIES, PROTEIN_RESNAMES,
+    REPRESENTATIVE_ATOMS, RESIDUE_COLUMNS, WATER_RESNAMES,
+)
+
+###################################### RESIDUE CLASSIFICATION
+
+
+def residue_moiety(residue):
+    """Return the biomolecule type of a residue: 'protein', 'nucleic', 'ligand', 'ion', or 'water'."""
+    name = residue.get_resname().strip().upper()
+    if residue.id[0] == "W" or name in WATER_RESNAMES:
+        return MOIETY_WATER
+    if name in PROTEIN_RESNAMES:
+        return MOIETY_PROTEIN
+    if name in NUCLEIC_RESNAMES:
+        return MOIETY_NUCLEIC
+    if name in ION_RESNAMES or len(residue) == 1:
+        return MOIETY_ION
+    return MOIETY_LIGAND
+
+
+def is_heavy(atom):
+    """Return True if an atom is not hydrogen."""
+    return (atom.element or atom.get_name()[:1]).strip().upper() != "H"
+
+
+def representative_coord(residue, moiety):
+    """Return a residue's contact point in A, or None if it has none.
+
+    Protein uses C-alpha, nucleic acids C4' (or C1', then P), ligands and ions the heavy-atom centroid.
+
+    Args:
+        residue: Biopython Residue.
+        moiety: Biomolecule type from residue_moiety.
+    """
+    if moiety in (MOIETY_LIGAND, MOIETY_ION):
+        coords = [atom.coord for atom in residue.get_atoms() if is_heavy(atom)]
+        return np.mean(coords, axis=0) if coords else None
+    for name in REPRESENTATIVE_ATOMS.get(moiety, ()):
+        if name in residue:
+            return residue[name].coord
+    return None
+
+
+def split_residues(chain):
+    """Return (polymer, hetero) lists of (residue, moiety) pairs for a chain, in chain order."""
+    polymer, hetero = [], []
+    for residue in chain.get_residues():
+        moiety = residue_moiety(residue)
+        (polymer if moiety in POLYMER_MOIETIES else hetero).append((residue, moiety))
+    return polymer, hetero
 
 ###################################### RESIDUE MAPPING
 
 
 class ResidueMixin:
     def _residue_frame(self, chain_id):
-        """Return a DataFrame with one row per observed residue of a chain and its reference index."""
-        _, _, seq_to_ref = self._local_alignment(chain_id)
+        """Return one row per polymer residue with 1-based sequence and reference indices."""
         data = self.chains[chain_id]
+        mapping = data["sequence_index_to_ref_index"]
         rows = [
             {
                 "structure_id": self.structure_id,
@@ -25,11 +76,11 @@ class ResidueMixin:
                 "auth_chain_id": data["auth_chain_id"],
                 "pdb_resnum": residue.id[1],
                 "resname": residue.resname.strip().upper(),
-                "sequence_index": position,
-                "reference_index": seq_to_ref.get(position),
-                "moiety": residue_moiety(residue),
+                "sequence_index": index + 1,
+                "reference_index": mapping[index] + 1 if index in mapping else None,
+                "moiety": moiety,
             }
-            for position, residue in enumerate(data["residues"], start=1)
+            for index, (residue, moiety) in enumerate(zip(data["residues"], data["moieties"]))
         ]
         frame = pd.DataFrame(rows, columns=RESIDUE_COLUMNS)
         frame["reference_index"] = frame["reference_index"].astype("Int64")
@@ -37,23 +88,23 @@ class ResidueMixin:
 
     def get_residue_mapping(self, chain_id):
         """Return a DataFrame with standard and author chain IDs, pdb_resnum, sequence_index, and reference_index."""
-        chain_id = self._require_chain(chain_id)
-        return self._residue_frame(chain_id)[MAPPING_COLUMNS].reset_index(drop=True)
+        return self._residue_frame(self._require_chain(chain_id))[MAPPING_COLUMNS].reset_index(drop=True)
 
     @property
     def residue_map(self):
-        """Return a DataFrame of all observed residues across chains with their indices."""
+        """Return a DataFrame of all polymer residues across chains with their indices."""
         if not self.chains:
             return pd.DataFrame(columns=RESIDUE_COLUMNS)
         return pd.concat([self._residue_frame(chain_id) for chain_id in self.chains], ignore_index=True)
+
     @property
     def moiety_summary(self):
         """Return one row per chain and biomolecule type with residue and atom counts."""
         rows = []
-        for chain_id, data in self.chains.items():
+        for data in self.chains.values():
             counts = {}
-            for residue in data["residues"]:
-                moiety = residue_moiety(residue)
+            pairs = list(zip(data["residues"], data["moieties"])) + data["hetero"]
+            for residue, moiety in pairs:
                 n_res, n_atoms = counts.get(moiety, (0, 0))
                 counts[moiety] = (n_res + 1, n_atoms + len(residue))
             for moiety, (n_res, n_atoms) in counts.items():
@@ -71,16 +122,12 @@ class ResidueMixin:
         """Return the chain IDs that contain at least one residue of a biomolecule type.
 
         Args:
-            moiety: One of 'protein', 'nucleic', 'ligand', or 'water'.
+            moiety: One of 'protein', 'nucleic', 'ligand', 'ion', or 'water'.
         """
         if moiety not in MOIETIES:
             raise ValueError(f"moiety must be one of {MOIETIES}.")
         frame = self.moiety_summary
         return frame.loc[frame["moiety"] == moiety, "chain_id"].drop_duplicates().tolist()
-
-    def to_dataframe(self):
-        """Alias for residue_map."""
-        return self.residue_map
 
 ###################################### RENUMBERING AND TRIMMING
 
@@ -101,29 +148,30 @@ class ResidueMixin:
 
     @staticmethod
     def _renumber(chain):
-        """Renumber a chain's residues 1..N in place."""
+        """Renumber a chain's polymer residues 1..N in place, leaving hetero residues untouched."""
+        polymer, _ = split_residues(chain)
         ResidueMixin._reassign(chain, [(residue, (" ", number, " "))
-                                       for number, residue in enumerate(chain.get_residues(), start=1)])
+                                       for number, (residue, _) in enumerate(polymer, start=1)])
 
     @classmethod
     def _keep_mapped(cls, chain, index_mapping):
-        """Remove unmapped residues from a chain and renumber the kept ones by reference position.
+        """Remove unmapped polymer residues and renumber the kept ones by reference position; hetero residues stay.
 
         Args:
             chain: Biopython Chain to trim in place.
-            index_mapping: Dict from observed to reference indices.
+            index_mapping: Dict from 0-based observed to 0-based reference indices.
         """
-        protein = [residue for residue in chain.get_residues() if is_protein_residue(residue)]
-        pairs = [(protein[index], (" ", ref_index + 1, " "))
-                 for index, ref_index in index_mapping.items() if index < len(protein)]
+        polymer = [residue for residue, _ in split_residues(chain)[0]]
+        pairs = [(polymer[index], (" ", ref_index + 1, " "))
+                 for index, ref_index in index_mapping.items() if index < len(polymer)]
         kept = {id(residue) for residue, _ in pairs}
-        for residue in list(chain.get_residues()):
+        for residue in polymer:
             if id(residue) not in kept:
                 chain.detach_child(residue.id)
         cls._reassign(chain, pairs)
 
     def apply_reference_numbering(self, chain_ids=None):
-        """Trim unmapped residues and renumber mapped ones by reference position in place, and return self.
+        """Trim unmapped polymer residues and renumber mapped ones by reference position in place, and return self.
 
         Args:
             chain_ids: Chains to process, or None for all chains.
@@ -142,7 +190,7 @@ class ResidueMixin:
         return self
 
     def reindex_chain(self, chain_id, in_place=False):
-        """Return a chain with residues renumbered 1..N, modifying the structure only if in_place is True.
+        """Return a chain with polymer residues renumbered 1..N, modifying the structure only if in_place is True.
 
         Args:
             chain_id: Chain identifier.

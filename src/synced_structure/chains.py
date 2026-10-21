@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Chain lifecycle, sequence mapping, chain renaming, external references, and per-chain summaries keyed by author IDs with standard IDs alongside."""
 
 ###################################### IMPORTS AND CONSTANTS
@@ -9,8 +8,11 @@ import itertools
 import numpy as np
 import pandas as pd
 
-from constants import DEFAULT_CONTACT_MOIETIES, CONTACTS_CUTOFF_nm, REPRESENTATIVE_ATOMS
-from helpers import clean_sequence, is_protein_residue, residue_moiety, residue_to_letter
+from .alignment import query_coverage
+from .constants import CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, MATCH_COLUMNS, RENAME_COLUMNS
+from .residues import split_residues
+from .sequence import clean_sequence, residue_to_letter
+from .utils import log_info
 
 ###################################### CHAIN MANAGEMENT
 
@@ -31,13 +33,10 @@ class ChainMixin:
                     return key
         raise KeyError(f"Unknown chain: {chain_id}")
 
-    @staticmethod
-    def _protein_residues(chain):
-        """Return the amino acid residues of a chain."""
-        return [residue for residue in chain.get_residues() if is_protein_residue(residue)]
-
     def _map_to_reference(self, sequence, reference):
         """Return {observed 0-based index: reference 0-based index} from a global alignment.
+
+        This is the only observed-to-reference mapping; public tables report it 1-based.
 
         Args:
             sequence: Observed sequence.
@@ -75,7 +74,7 @@ class ChainMixin:
             external_ref: User-set external reference, or None to use the mmCIF reference.
         """
         key = str(chain.id)
-        residues = self._protein_residues(chain)
+        polymer, hetero = split_residues(chain)
         if reference_sequence is None:
             reference_sequence = self._reference_for_chain(key)
         data = {
@@ -84,8 +83,10 @@ class ChainMixin:
             "auth_chain_id": self._auth_of(key),
             "entity_id": self._resolve_entity(key, entity_id),
             "external_ref": external_ref,
-            "residues": residues,
-            "sequence": "".join(residue_to_letter(residue) for residue in residues),
+            "residues": [residue for residue, _ in polymer],
+            "moieties": [moiety for _, moiety in polymer],
+            "hetero": hetero,
+            "sequence": "".join(residue_to_letter(residue, moiety) for residue, moiety in polymer),
             "reference_sequence": clean_sequence(reference_sequence),
             "metadata": dict(metadata or {}),
         }
@@ -153,18 +154,7 @@ class ChainMixin:
         data = self.chains[self._require_chain(chain_id)]
         if data["external_ref"]:
             return data["external_ref"]
-        exts = self._external_refs_for_entity(data["entity_id"])
-        return ", ".join(exts) if exts else None
-
-    def _external_refs_for_entity(self, entity_id):
-        """Return the mmCIF external accessions linked to an entity, or an empty list.
-
-        Args:
-            entity_id: Entity identifier.
-        """
-        if not hasattr(self, "_external_ref_map"):
-            self._chain_entity_map()
-        return [ext for ext, ent in self._external_ref_map.items() if ent == entity_id]
+        return ", ".join(self._external_refs.get(data["entity_id"], [])) or None
 
     def set_external_ref(self, chain_id, external_ref):
         """Set a chain's external reference, overriding the mmCIF value in summaries, and return self.
@@ -175,6 +165,27 @@ class ChainMixin:
         """
         chain_id = self._require_chain(chain_id)
         self.chains[chain_id]["external_ref"] = None if external_ref is None else str(external_ref)
+        return self
+
+    def set_chain_metadata(self, chain_id, key, value):
+        """Store a user-defined value on a chain and return self.
+
+        Args:
+            chain_id: Chain identifier, standard or author.
+            key: Metadata key.
+            value: Value to store.
+        """
+        self.chains[self._require_chain(chain_id)]["metadata"][str(key)] = value
+        return self
+
+    def set_entity_id(self, chain_id, entity_id):
+        """Set a chain's entity ID and return self.
+
+        Args:
+            chain_id: Chain identifier, standard or author.
+            entity_id: New entity identifier.
+        """
+        self.chains[self._require_chain(chain_id)]["entity_id"] = str(entity_id)
         return self
 
     def set_reference_sequence(self, chain_id, sequence, remap=True):
@@ -202,9 +213,9 @@ class ChainMixin:
     def remap_chain(self, chain_id):
         """Rebuild the mapping of one chain against its current reference and return self."""
         chain_id = self._require_chain(chain_id)
-        data = self.chains[chain_id]
-        print(f"[PYTHON-INFO] remapped {chain_id}")
-        return self.set_reference_sequence(chain_id, data["reference_sequence"], remap=True)
+        self.set_reference_sequence(chain_id, self.chains[chain_id]["reference_sequence"], remap=True)
+        log_info(f"{self.structure_id}: remapped {chain_id}")
+        return self
 
     def remap_all_chains(self):
         """Rebuild the mappings of all chains and return self."""
@@ -225,9 +236,9 @@ class ChainMixin:
         if reference_sequence is not None:
             self.set_reference_sequence(chain_id, reference_sequence)
         if entity_id is not None:
-            self.chains[chain_id]["entity_id"] = str(entity_id)
-        if metadata:
-            self.chains[chain_id]["metadata"].update(metadata)
+            self.set_entity_id(chain_id, entity_id)
+        for key, value in (metadata or {}).items():
+            self.set_chain_metadata(chain_id, key, value)
 
     def add_chain(self, chain, reference_sequence=None, entity_id=None, metadata=None, replace=False):
         """Add a Biopython chain, optionally replacing an existing one, and return self.
@@ -300,8 +311,7 @@ class ChainMixin:
         matches = sum(x == y for x, y in columns)
         aligned = len(columns)
         identity = round(matches / aligned * 100, 2) if aligned else 0.0
-        coverage = round(aligned / len(seq_b) * 100, 2)
-        return identity, aligned, coverage
+        return identity, aligned, query_coverage(aligned, len(seq_b))
 
     def match_chains(self, sequence, min_identity=90.0):
         """Return a DataFrame of chains aligning to a query sequence with standard and author IDs.
@@ -322,8 +332,7 @@ class ChainMixin:
                     "aligned_residues": aligned,
                     "query_coverage_percent": coverage,
                 })
-        columns = ["chain_id", "auth_chain_id", "identity_percent", "aligned_residues", "query_coverage_percent"]
-        return pd.DataFrame(rows, columns=columns).sort_values("identity_percent", ascending=False, ignore_index=True)
+        return pd.DataFrame(rows, columns=MATCH_COLUMNS).sort_values("identity_percent", ascending=False, ignore_index=True)
 
     def rename_chains(self, mapping):
         """Rename chain keys with a {old: new} dict, keeping standard and author ID maps, entities, and sequences in sync.
@@ -396,7 +405,7 @@ class ChainMixin:
             self.rename_chains(renames)
             for old_id, new_id in renames.items():
                 self.set_reference_sequence(new_id, targets[new_id])
-        return pd.DataFrame(rows, columns=["new_chain_id", "old_chain_id", "old_auth_chain_id", "identity_percent", "status"])
+        return pd.DataFrame(rows, columns=RENAME_COLUMNS)
 
 ###################################### CONTACT PARTNERS
 
@@ -418,31 +427,18 @@ class ChainMixin:
                 return True
         return False
 
-    def _representative_coordinates(self):
-        """Return {chain_key: representative atom coordinates in nm} for the contact moieties of each chain."""
-        coords = {}
-        for key, data in self.chains.items():
-            points = []
-            for residue in data["chain"].get_residues():
-                moiety = residue_moiety(residue)
-                if moiety not in DEFAULT_CONTACT_MOIETIES:
-                    continue
-                for name in REPRESENTATIVE_ATOMS[moiety]:
-                    if name in residue:
-                        points.append(residue[name].coord)
-                        break
-            if points:
-                coords[key] = np.asarray(points, dtype=np.float64) / 10.0
-        return coords
-
-    def chain_contact_partners(self, cutoff=CONTACTS_CUTOFF_nm):
-        """Return {chain_key: sorted chain_keys in contact} from inter-chain representative-atom distances.
+    def chain_contact_partners(self, cutoff=CONTACTS_CUTOFF_NM, moieties=DEFAULT_CONTACT_MOIETIES):
+        """Return {chain_key: sorted chain_keys in contact} from inter-chain contact-point distances.
 
         Args:
             cutoff: Contact cutoff in nm.
+            moieties: Biomolecule types whose contact points are compared.
         """
+        points = {}
+        for record in self._contact_records(moieties=moieties):
+            points.setdefault(record["key"], []).append(record["point"])
+        coords = {key: np.asarray(values, dtype=np.float64) / 10.0 for key, values in points.items()}
         partners = {key: [] for key in self.chains}
-        coords = self._representative_coordinates()
         for chain_a, chain_b in itertools.combinations(coords, 2):
             if self._coords_touch(coords[chain_a], coords[chain_b], cutoff):
                 partners[chain_a].append(chain_b)
@@ -453,7 +449,7 @@ class ChainMixin:
 
     def summary(self):
         """Return a summary DataFrame with standard and author chain IDs, entity, description, external reference, and mapping coverage."""
-        desc_map = self._chain_description_map()
+        descriptions = self._entity_descriptions()
         rows = []
         for key, data in self.chains.items():
             length = data["sequence_length"]
@@ -461,7 +457,7 @@ class ChainMixin:
                 "chain_id": data["chain_id"],
                 "auth_chain_id": data["auth_chain_id"],
                 "entity_id": data["entity_id"],
-                "description": desc_map.get(key),
+                "description": descriptions.get(data["entity_id"]),
                 "external_ref": self.get_external_ref(key),
                 "sequence_length": length,
                 "reference_length": data["reference_length"],

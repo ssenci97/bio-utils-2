@@ -1,0 +1,55 @@
+"""Matplotlib style constants shared by contact plots, panel grids, and figure export."""
+
+###################################### IMPORTS AND CONSTANTS
+
+from matplotlib.colors import LinearSegmentedColormap
+
+### contact maps
+CONTACT_MAP_BACKGROUND = "white"
+CONTACT_MAP_COLOR = "#c0392b"
+CONTACT_MAP_CMAP = "viridis_r"
+CONTACT_MAP_SIZE_IN = 3.5
+CONTACT_MULTI_SIZE_IN = {2: 3.5, 3: 3.5, 4: 4.0}
+CONTACT_MAP_DPI = 150
+CONTACT_FONT_PT_PER_IN = 4.0
+CONTACT_FONT_MIN_PT = 10.0
+CONTACT_FONT_MAX_PT = 24.0
+CONTACT_TICK_RATIO = 0.85
+CONTACT_TITLE_RATIO = 1.15
+CONTACT_SUPTITLE_RATIO = 1.3
+CONTACT_LEGEND_ROW_RATIO = 1.4
+CONTACT_TICK_BLOCK_RATIO = 1.4
+CONTACT_AXIS_TITLE_RATIO = 1.6
+CONTACT_MAP_TICK_STEP = 50
+CONTACT_MAP_N_TICKS = 4
+CONTACT_MAP_MIN_MARKER_PT = 2.5
+CONTACT_MAP_STYLES = ("scatter", "heatmap")
+CONTACT_MAP_VALUES = ("contact", "distance")
+CONTACT_GRAY_FACTOR = 1.5
+CONTACT_GRAY_NEAR = "#8c8c8c"
+CONTACT_GRAY_FAR = "#f2f2f2"
+CONTACT_GRAY_CMAP = LinearSegmentedColormap.from_list("contact_gray", [CONTACT_GRAY_NEAR, CONTACT_GRAY_FAR])
+MULTI_INTRA_COLOR = "#7f7f7f"
+MULTI_BOX_COLOR = "black"
+MULTI_BOX_LW = 0.5
+MULTI_TRACK_OFFSET = 1.5
+MULTI_PAIR_COLORS = ("#c0392b", "#2980b9", "#27ae60", "#8e44ad", "#d35400", "#16a085",
+                     "#f39c12", "#2c3e50", "#e84393", "#00cec9")
+PLDDT_BANDS = (("≥90", "#0053D6"), ("70–90", "#65CBF3"), ("50–70", "#FFDB13"), ("<50", "#FF7D45"))
+PLDDT_MISSING_COLOR = "#d0d0d0"
+CONTACT_PANEL_SIZE_IN = 10.0
+CONTACT_PANEL_LINE_COLORS = ("#1f77b4", "#ff7f0e")
+CONTACT_HIST_BINS = 30
+
+### figure export and panel grids
+EXPORT_DPI = 300
+RASTER_DPI = 600
+FIGURE_FORMATS = ("png", "svg")
+PANEL_FORMATS = ("pdf", "png")
+PANEL_PDF_NAME = "panels.pdf"
+GRID_LINE_COLOR = "gray"
+GRID_LINE_WIDTH = 0.5
+GRID_GUTTER_MM = 0.2
+GRID_SHARED_GAP_OFFSET = 0.004
+GRID_LABEL_SIZE = 14
+GRID_TITLE_SIZE = 16

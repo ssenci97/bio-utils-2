@@ -1,37 +1,37 @@
-#!/usr/bin/env python
 """SyncedStructure class assembled from the mixin modules, keyed by author chain IDs by default."""
 
 ###################################### IMPORTS AND CONSTANTS
 
-from alignment import AlignmentMixin
-from chains import ChainMixin
-from constants import CONFIG_SECTION, DEFAULT_CONFIG, DEFAULT_CONFIG_PATH
-from contacts import ContactMixin
-from contact_map import ContactMapMixin
-from exporter import ExportMixin
-from helpers import make_global_aligner, make_local_aligner, resolve_config
-from interface_metrics import InterfaceMixin
-from loaders import KEY_MODES, LoaderMixin
-from metadata import MetadataMixin
-from residues import ResidueMixin
-from viz3d import Viz3DMixin
-from viz3d import side_by_side
-from exporter import export_panels_pdf
+from .alignment import AlignmentMixin, make_global_aligner, make_local_aligner
+from .chains import ChainMixin
+from .constants import CONFIG_SECTION, DEFAULT_CONFIG, DEFAULT_CONFIG_PATH, KEY_MODES
+from .contact_matrix import ContactMatrixMixin
+from .contact_plots import ContactPlotMixin
+from .contact_stats import ContactStatsMixin
+from .contacts import ContactMixin
+from .exporter import ExportMixin
+from .interface_metrics import InterfaceMixin
+from .loaders import LoaderMixin
+from .metadata import MetadataMixin
+from .residues import ResidueMixin
+from .utils import resolve_config
+from .viz3d import Viz3DMixin
+
 ###################################### SYNCHRONIZED STRUCTURE
 
 
-class SyncedStructure(LoaderMixin, MetadataMixin, ChainMixin, AlignmentMixin, ResidueMixin,
-                      ContactMixin, ContactMapMixin, ExportMixin, InterfaceMixin, Viz3DMixin):
+class SyncedStructure(LoaderMixin, MetadataMixin, ChainMixin, AlignmentMixin, ResidueMixin, ContactMixin,
+                      ContactMatrixMixin, ContactStatsMixin, ContactPlotMixin, ExportMixin, InterfaceMixin, Viz3DMixin):
     def __init__(self, structure, structure_id="structure", mmcif_dict=None,
                  file_format="cif", config_path=DEFAULT_CONFIG_PATH, default_entity_id=None, key_by="auth"):
-        """Build the synchronized structure from a Biopython Structure and load its YAML config.
+        """Build the synchronized structure from a Biopython Structure and its optional YAML config.
 
         Args:
             structure: Biopython Structure object.
             structure_id: Identifier used in output names.
             mmcif_dict: Parsed mmCIF dict providing reference metadata.
             file_format: Source format, 'cif' or 'pdb'.
-            config_path: Path to the YAML config file.
+            config_path: Path to the YAML config file, or None for defaults; never written.
             default_entity_id: Entity ID used when mmCIF metadata is missing.
             key_by: 'auth' (default) keys chains by author IDs, 'label' by label IDs.
         """
@@ -50,6 +50,8 @@ class SyncedStructure(LoaderMixin, MetadataMixin, ChainMixin, AlignmentMixin, Re
         self._local_aligner = make_local_aligner(self.config)
         self._alignment_cache = {}
         self._interface_cache = {}
+        self._atom_pair_maps()
         self._reference_by_entity = self._entity_sequences()
         self._entity_by_chain = self._chain_entity_map()
+        self._external_refs = self._entity_external_refs()
         self._build_chains()
