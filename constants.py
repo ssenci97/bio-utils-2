@@ -3,8 +3,8 @@
 
 ###################################### IMPORTS AND CONSTANTS
 
-from Bio.PDB.Polypeptide import protein_letters_3to1_extended, nucleic_letters_3_to_1_extented
-
+from Bio.PDB.Polypeptide import protein_letters_3to1_extended
+from Bio.Data.PDBData import nucleic_letters_3to1, nucleic_letters_3to1_extended
 
 SEED = 42
 RCSB_URL = "https://files.rcsb.org/download/{}.cif"

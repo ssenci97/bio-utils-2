@@ -21,7 +21,7 @@ from exporter import export_panels_pdf
 
 
 class SyncedStructure(LoaderMixin, MetadataMixin, ChainMixin, AlignmentMixin, ResidueMixin,
-                      ContactMixin, ContactMapMixin, ExportMixin, InterfaceMixin, EnsembleMixin, Viz3DMixin):
+                      ContactMixin, ContactMapMixin, ExportMixin, InterfaceMixin, Viz3DMixin):
     def __init__(self, structure, structure_id="structure", mmcif_dict=None,
                  file_format="cif", config_path=DEFAULT_CONFIG_PATH, default_entity_id=None, key_by="auth"):
         """Build the synchronized structure from a Biopython Structure and load its YAML config.
