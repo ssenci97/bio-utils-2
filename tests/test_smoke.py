@@ -21,11 +21,13 @@ def sync():
 def test_chains_and_moieties(sync):
     assert sync.chain_ids == ["B", "C", "A"]
     assert sync.get_sequence("B") == "AGCGTGGGCGT"
-    assert set(sync.moiety_summary["moiety"]) == {"protein", "nucleic", "ion", "water"}
+    assert set(sync.moiety_summary["moiety"]) == {"protein", "nucleic", "other"}
     assert sync.chains_by_moiety("nucleic") == ["A", "B"]
     summary = sync.summary()
     assert summary["mapping_fraction"].eq(1.0).all()
     assert dict(zip(summary["chain_id"], summary["moiety"])) == {"B": "nucleic", "C": "protein", "A": "nucleic"}
+    polymer = sync.moiety_summary.query("moiety != 'other'").groupby("chain_id")["moiety"].agg("+".join)
+    assert dict(zip(summary["chain_id"], summary["moiety"])) == polymer.to_dict()
     assert "partners" not in summary
     with_partners = sync.summary(partners=True)
     assert dict(zip(with_partners["auth_chain_id"], with_partners["partners"])) == {"A": "B;C", "B": "A", "C": "A"}
@@ -43,9 +45,9 @@ def test_indices_are_one_based_and_consistent(sync):
 
 
 def test_contacts_and_strings(sync, tmp_path):
-    contacts = sync.compute_contacts(contact_type="inter", moieties=("protein", "nucleic", "ion"))
+    contacts = sync.compute_contacts(contact_type="inter", moieties=("protein", "nucleic", "other"))
     assert {"protein", "nucleic"} <= set(contacts["moiety_1"]) | set(contacts["moiety_2"])
-    assert contacts.loc[contacts["moiety_2"] == "ion", "sequence_index_2"].isna().all()
+    assert contacts.loc[contacts["moiety_2"] == "other", "sequence_index_2"].isna().all()
     assert "1" in sync.get_contact_sequence("B")
     path = sync.export_contact_sequences(tmp_path / "out" / "strings.tsv", reference=True)
     assert path.is_file()
@@ -91,8 +93,7 @@ def test_reference_numbering_keeps_hetero(sync):
     before = sync.moiety_summary
     sync.apply_reference_numbering()
     after = sync.moiety_summary
-    hetero = ["ion", "water"]
-    assert before[before["moiety"].isin(hetero)].equals(after[after["moiety"].isin(hetero)])
+    assert before[before["moiety"] == "other"].equals(after[after["moiety"] == "other"])
     assert sync["A"].residues[0].id[1] == 3
 
 

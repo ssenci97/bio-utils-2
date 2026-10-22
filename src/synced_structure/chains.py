@@ -13,8 +13,8 @@ import pandas as pd
 
 from .alignment import query_coverage
 from .constants import (
-    ANGSTROM_PER_NM, CONTACTS_CUTOFF_NM, COORD_BLOCK_ROWS, DEFAULT_CONTACT_MOIETIES, MATCH_COLUMNS, MOIETIES,
-    RENAME_COLUMNS,
+    ANGSTROM_PER_NM, CONTACTS_CUTOFF_NM, COORD_BLOCK_ROWS, DEFAULT_CONTACT_MOIETIES, MATCH_COLUMNS, MOIETY_OTHER,
+    POLYMER_MOIETIES, RENAME_COLUMNS,
 )
 from .residues import split_residues
 from .sequence import clean_sequence, residue_to_letter
@@ -552,8 +552,9 @@ class ChainMixin:
     def summary(self, partners=False, cutoff=CONTACTS_CUTOFF_NM, moieties=DEFAULT_CONTACT_MOIETIES):
         """Return a summary DataFrame with standard and author chain IDs, entity, polymer moiety, description, external reference, reference sequence ID, and mapping coverage.
 
-        The moiety column names the biomolecule types of the chain's polymer residues, joined with '+' when mixed,
-        or of its other residues when it has no polymer.
+        The moiety column names the chain's polymer type, 'protein' or 'nucleic' (joined with '+' when mixed), or
+        'other' when it has no polymer; ligands, ions, and water bound to a polymer chain are counted only in
+        moiety_summary.
 
         Args:
             partners: If True, add a 'partners' column of ';'-joined contact partner keys; this computes contacts.
@@ -565,12 +566,12 @@ class ChainMixin:
         rows = []
         for key, data in self.chains.items():
             length = data.sequence_length
-            present = set(data.moieties) or {moiety for _, moiety in data.hetero}
+            present = set(data.moieties)
             rows.append({
                 "chain_id": data.chain_id,
                 "auth_chain_id": data.auth_chain_id,
                 "entity_id": data.entity_id,
-                "moiety": "+".join(moiety for moiety in MOIETIES if moiety in present),
+                "moiety": "+".join(moiety for moiety in POLYMER_MOIETIES if moiety in present) or MOIETY_OTHER,
                 "description": descriptions.get(data.entity_id),
                 "external_ref": self.get_external_ref(key),
                 "refseq_id": self.get_refseq_id(key),

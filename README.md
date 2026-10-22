@@ -4,7 +4,7 @@ A Biopython structure wrapper that keeps every observed residue linked to its po
 
 ## Why this package exists
 
-A deposited structure is an incomplete copy of a biological sequence, not the sequence itself. Disordered loops and termini are not modelled. Author numbering is chosen by the depositors and can start anywhere, skip numbers or use insertion codes. Every chain has two IDs, an author ID and a label ID, and they often differ. Protein, nucleic acid, ligands, ions and water share the same chain records.
+A deposited structure is an incomplete copy of a biological sequence, not the sequence itself. Disordered loops and termini are not modelled. Author numbering is chosen by the depositors and can start anywhere, skip numbers or use insertion codes. Every chain has two IDs, an author ID and a label ID, and they often differ. Protein, nucleic acid, ligands, ions and water share the same chain records; the last three are classed together as `other`.
 
 The STAT6–DNA complex [5D39](https://www.rcsb.org/structure/5D39) shows all of these:
 
@@ -199,13 +199,13 @@ Attributes: `structure`, `model`, `structure_id`, `file_format`, `mmcif_dict`, `
 |---|---|
 | `get_residue_mapping(chain_id)` | `pdb_resnum` ↔ `sequence_index` ↔ `reference_index` |
 | `residue_map` / `moiety_summary` *(properties)* | All residues; residue counts per chain and moiety |
-| `chains_by_moiety(moiety)` | Chains containing `protein`, `nucleic`, `ligand`, `ion` or `water` |
+| `chains_by_moiety(moiety)` | Chains containing `protein`, `nucleic` or `other` (ligands, ions, water) |
 | `apply_reference_numbering(chain_ids=None)` | Trim unmapped residues and renumber by reference, in place |
 | `reindex_chain(chain_id, in_place=False)` | Renumber 1..N |
 
 ### Contacts
 
-Contacts are computed with MDTraj using the `"ca"` scheme (one point per residue: Cα for protein, C4′ for nucleic acids, the heavy-atom centroid for ligands and ions) or the `"sidechain"` scheme (closest heavy atom).
+Contacts are computed with MDTraj using the `"ca"` scheme (one point per residue: Cα for protein, C4′ for nucleic acids, the heavy-atom centroid for `other` residues) or the `"sidechain"` scheme (closest heavy atom).
 
 ```python
 to_ca_trajectory(chain_ids=None, moieties=...)

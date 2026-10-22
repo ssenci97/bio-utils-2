@@ -19,7 +19,7 @@ matplotlib.use("Agg")
 from synced_structure import SyncedStructure, rcsb, side_by_side  # noqa: E402
 from synced_structure import utils  # noqa: E402
 from synced_structure.residues import residue_class  # noqa: E402
-from synced_structure.constants import MOIETY_ION, MOIETY_NUCLEIC  # noqa: E402
+from synced_structure.constants import MOIETY_NUCLEIC, MOIETY_OTHER  # noqa: E402
 
 CIF = Path(__file__).parent / "data" / "1AAY.cif"
 
@@ -59,7 +59,7 @@ def _single_atom_residue(resname):
 # residue classification
 
 def test_single_atom_uranium_is_ion_not_nucleic():
-    assert residue_class(_single_atom_residue("U")) == MOIETY_ION
+    assert residue_class(_single_atom_residue("U")) == MOIETY_OTHER
 
 
 def test_multi_atom_uracil_is_still_nucleic():

@@ -43,10 +43,8 @@ KEY_MODES = ("auth", "label")
 
 MOIETY_PROTEIN = "protein"
 MOIETY_NUCLEIC = "nucleic"
-MOIETY_LIGAND = "ligand"
-MOIETY_ION = "ion"
-MOIETY_WATER = "water"
-MOIETIES = (MOIETY_PROTEIN, MOIETY_NUCLEIC, MOIETY_LIGAND, MOIETY_ION, MOIETY_WATER)
+MOIETY_OTHER = "other"
+MOIETIES = (MOIETY_PROTEIN, MOIETY_NUCLEIC, MOIETY_OTHER)
 POLYMER_MOIETIES = (MOIETY_PROTEIN, MOIETY_NUCLEIC)
 DEFAULT_CONTACT_MOIETIES = POLYMER_MOIETIES
 
@@ -55,22 +53,6 @@ PROTEIN_3TO1 = {k.strip().upper(): v for k, v in protein_letters_3to1_extended.i
 NUCLEIC_TO1 = {k.strip().upper(): v for k, v in nucleic_letters_3to1_extended.items()}
 PROTEIN_RESNAMES = frozenset(PROTEIN_3TO1)
 NUCLEIC_RESNAMES = frozenset(NUCLEIC_TO1)
-WATER_RESNAMES = frozenset({"HOH", "WAT", "DOD", "H2O"})
-ION_RESNAMES = frozenset({
-    # Alkali & Alkaline Earth Metals
-    "LI", "NA", "K", "RB", "CS",
-    "MG", "CA", "SR", "BA",
-    # Transition & Heavy Metals (commonly in metalloproteins/cofactors)
-    "ZN", "FE", "CU", "MN", "NI", "CO", "CD", "HG", "PB", "AL",
-    "AG", "AU", "PT", "PD", "SN", "SB", "BI", "CR", "V", "MO",
-    "W", "TI", "GA", "IN", "TL", "SC", "Y", "LA", "CE", "PR",
-    "ND", "SM", "EU", "GD", "TB", "DY", "HO", "ER", "TM", "YB",
-    "LU", "U", "TH",
-    # Halides & Simple Anions
-    "CL", "BR", "I", "F",
-    # Common Physiological / Buffer Counter-Ions
-    "SO4", "PO4", "NO3", "NH4", "ACT"
-})
 REPRESENTATIVE_ATOMS = {MOIETY_PROTEIN: ("CA",), MOIETY_NUCLEIC: ("C4'", "C1'", "P")}
 BACKBONE_ATOMS = frozenset({"N", "CA", "C", "O", "OXT"})
 # phosphate atoms of a nucleotide; sugar atoms are recognized by a prime or asterisk in the name

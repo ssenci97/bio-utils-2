@@ -8,32 +8,29 @@ import numpy as np
 import pandas as pd
 
 from .constants import (
-    ION_RESNAMES, MAPPING_COLUMNS, MOIETIES, MOIETY_ION, MOIETY_LIGAND, MOIETY_NUCLEIC, MOIETY_PROTEIN,
-    MOIETY_SUMMARY_COLUMNS, MOIETY_WATER, NUCLEIC_RESNAMES, POLYMER_MOIETIES, PROTEIN_RESNAMES,
-    REPRESENTATIVE_ATOMS, RESIDUE_COLUMNS, WATER_RESNAMES,
+    MAPPING_COLUMNS, MOIETIES, MOIETY_NUCLEIC, MOIETY_OTHER, MOIETY_PROTEIN, MOIETY_SUMMARY_COLUMNS,
+    NUCLEIC_RESNAMES, POLYMER_MOIETIES, PROTEIN_RESNAMES, REPRESENTATIVE_ATOMS, RESIDUE_COLUMNS,
 )
 
 ###################################### RESIDUE CLASSIFICATION
 
 
 def residue_class(residue):
-    """Return the biomolecule type of a residue: 'protein', 'nucleic', 'ligand', 'ion', or 'water'.
+    """Return the biomolecule type of a residue: 'protein', 'nucleic', or 'other' (ligands, ions, and water).
 
-    Single-atom residues are ions before the nucleic-acid names are checked, so a uranium ion ('U') is not
+    Single-atom residues are 'other' before the nucleic-acid names are checked, so a uranium ion ('U') is not
     read as uracil.
     """
     name = residue.get_resname().strip().upper()
-    if residue.id[0] == "W" or name in WATER_RESNAMES:
-        return MOIETY_WATER
+    if residue.id[0] == "W":
+        return MOIETY_OTHER
     if name in PROTEIN_RESNAMES:
         return MOIETY_PROTEIN
     if len(residue) == 1:
-        return MOIETY_ION
+        return MOIETY_OTHER
     if name in NUCLEIC_RESNAMES:
         return MOIETY_NUCLEIC
-    if name in ION_RESNAMES:
-        return MOIETY_ION
-    return MOIETY_LIGAND
+    return MOIETY_OTHER
 
 
 residue_moiety = residue_class  # deprecated name, kept for existing callers
@@ -47,13 +44,13 @@ def is_heavy(atom):
 def representative_coord(residue, moiety):
     """Return a residue's contact point in A, or None if it has none.
 
-    Protein uses C-alpha, nucleic acids C4' (or C1', then P), ligands and ions the heavy-atom centroid.
+    Protein uses C-alpha, nucleic acids C4' (or C1', then P), other residues the heavy-atom centroid.
 
     Args:
         residue: Biopython Residue.
         moiety: Biomolecule type from residue_class.
     """
-    if moiety in (MOIETY_LIGAND, MOIETY_ION):
+    if moiety == MOIETY_OTHER:
         coords = [atom.coord for atom in residue.get_atoms() if is_heavy(atom)]
         return np.mean(coords, axis=0) if coords else None
     for name in REPRESENTATIVE_ATOMS.get(moiety, ()):
@@ -138,7 +135,7 @@ class ResidueMixin:
         """Return the chain IDs that contain at least one residue of a biomolecule type.
 
         Args:
-            moiety: One of 'protein', 'nucleic', 'ligand', 'ion', or 'water'.
+            moiety: One of 'protein', 'nucleic', or 'other'.
         """
         if moiety not in MOIETIES:
             raise ValueError(f"moiety must be one of {MOIETIES}.")
