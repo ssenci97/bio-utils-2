@@ -175,7 +175,7 @@ class Viz3DMixin(StructureState):
 
 ###################################### STRUCTURE TEXT
 
-    def _mmcif_string(self, chain_id: str | None = None) -> str:
+    def _mmcif_text(self, chain_id: str | None = None) -> str:
         """Return the structure, or one chain, as mmCIF text, which has no atom serial limit.
 
         Args:
@@ -184,7 +184,7 @@ class Viz3DMixin(StructureState):
         Returns:
             The mmCIF text.
         """
-        selected = {self._require_chain(chain_id)} if chain_id is not None else set(self.chains)
+        selected = {self._chain_key(chain_id)} if chain_id is not None else set(self.chains)
         structure = copy.deepcopy(self.structure)
         model = next(structure.get_models())
         for chain in list(model.get_chains()):
@@ -198,7 +198,7 @@ class Viz3DMixin(StructureState):
 
 ###################################### OVERLAY
 
-    def _angles_overlay(self, element: str, text: str, angles_font_px: int = ANGLES_FONT_PX) -> str:
+    def _angles_overlay_html(self, element: str, text: str, angles_font_px: int = ANGLES_FONT_PX) -> str:
         """Return the bottom right overlay with the angle text and the reset and current buttons.
 
         Args:
@@ -245,14 +245,14 @@ class Viz3DMixin(StructureState):
                viz_format, js_url, label_js, angles_js, angles_font_px)
         element = "viz_" + hashlib.sha1(repr(key).encode()).hexdigest()[:12]
         text = f"x {angles[0]}\u00b0 y {angles[1]}\u00b0 z {angles[2]}\u00b0"
-        overlay = self._angles_overlay(element, text, angles_font_px) if show_angles else ""
+        overlay = self._angles_overlay_html(element, text, angles_font_px) if show_angles else ""
         replacements = {
             "__ELEMENT__": element, "__SIZE__": str(size), "__OVERLAY__": overlay, "__JS_URL__": js_url,
             "__FORMAT__": viz_format, "__PALETTE__": json.dumps(palette), "__STYLE__": style,
             "__BACKGROUND__": json.dumps(background), "__LABEL__": label_js,
             "__POSE__": json.dumps(list(_quaternion(angles))), "__SHOW__": "true" if show_angles else "false",
             "__ANGLES__": angles_js, "__TEXT__": json.dumps(text),
-            "__CIF__": json.dumps(self._mmcif_string(chain_id=chain_id)),
+            "__CIF__": json.dumps(self._mmcif_text(chain_id=chain_id)),
         }
         html = VIZ_TEMPLATE
         for key_name, value in replacements.items():

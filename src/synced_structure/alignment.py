@@ -115,7 +115,7 @@ class AlignmentMixin(StructureState):
         ref_start, obs_start = int(coordinates[0, 0]), int(coordinates[1, 0])
         ref_end, obs_end = int(coordinates[0, -1]), int(coordinates[1, -1])
         rows, counts, gap_positions = self._alignment_columns(label, auth, ref_aligned, obs_aligned, ref_start, obs_start)
-        stats = self._alignment_stats(label, auth, reference, observed, counts, gap_positions,
+        stats = self._alignment_row(label, auth, reference, observed, counts, gap_positions,
                                       (ref_start, ref_end), obs_end, obs_start)
         return stats, rows
 
@@ -165,7 +165,7 @@ class AlignmentMixin(StructureState):
             })
         return rows, counts, gap_positions
 
-    def _alignment_stats(self, label: str, auth: str, reference: str, observed: str, counts: dict[str, int],
+    def _alignment_row(self, label: str, auth: str, reference: str, observed: str, counts: dict[str, int],
                          gap_positions: list[str], ref_span: tuple[int, int], obs_end: int, obs_start: int) -> Record:
         """Return the one-row summary of a local alignment.
 
@@ -217,7 +217,7 @@ class AlignmentMixin(StructureState):
 ###################################### EXPOSED ALIGNMENT FRAMES
 
     @property
-    def reference_alignment_stats(self) -> pd.DataFrame:
+    def alignment_table(self) -> pd.DataFrame:
         """Return local alignment statistics of each chain against its reference.
 
         Returns:
@@ -227,7 +227,7 @@ class AlignmentMixin(StructureState):
         return pd.DataFrame([row for row in rows if row])
 
     @property
-    def reference_alignment_positions(self) -> pd.DataFrame:
+    def alignment_column_table(self) -> pd.DataFrame:
         """Return the column-by-column local alignment of every chain against its reference.
 
         Returns:

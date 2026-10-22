@@ -28,8 +28,8 @@ for folder in (TABLES, FIGURES, STRUCTURE):
 
 # Contact statistics report label chain IDs; plots take chain keys (author IDs by default)
 key_of = {record.chain_id: key for key, record in s.chains.items()}
-summary = s.chain_summary()
-stats = s.contact_statistics()
+summary = s.chain_table()
+stats = s.contact_stat_tables()
 inter = stats["pairs"].query("contact_type == 'inter'")
 inter_pairs = [(key_of[a], key_of[b]) for a, b in zip(inter["chain_a"], inter["chain_b"])]
 polymers = [key_of[row.chain_id] for row in summary.itertuples() if row.moiety in ("protein", "nucleic")]
@@ -40,14 +40,13 @@ summary_path = TABLES / f"{PDB_ID}_summary.tsv"
 summary.to_csv(summary_path, sep="\t", index=False)
 tables = [
     summary_path,
-    s.export_chain_summary(outdir=TABLES),
-    s.export_residue_mapping(outdir=TABLES),
+    s.export_chain_table(outdir=TABLES),
+    s.export_chain_residue_table(outdir=TABLES),
     s.export_residue_table(outdir=TABLES),
     s.export_moiety_table(outdir=TABLES),
-    s.export_reference_alignment_stats(outdir=TABLES),
-    s.export_reference_alignment_positions(outdir=TABLES),
-    s.export_interface_complex(inter_pairs, outdir=TABLES),
-    s.export_interface_residues(inter_pairs, outdir=TABLES),
+    s.export_alignment_table(outdir=TABLES),
+    s.export_alignment_column_table(outdir=TABLES),
+    *s.export_interface_tables(inter_pairs, outdir=TABLES),
     s.export_contact_strings(TABLES / f"{PDB_ID}_contact_sequences.tsv"),
     s.export_contact_strings(TABLES / f"{PDB_ID}_contact_sequences_reference.tsv", reference=True),
 ]

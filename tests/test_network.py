@@ -16,14 +16,14 @@ def hemoglobin():
 
 def test_from_rcsb_hemoglobin_chains(hemoglobin):
     assert hemoglobin.chain_ids == ["A", "B", "C", "D"]
-    summary = hemoglobin.chain_summary()
+    summary = hemoglobin.chain_table()
     descriptions = dict(zip(summary["chain_id"], summary["description"]))
     assert "alpha" in descriptions["A"].lower() and "beta" in descriptions["B"].lower()
     assert summary["mapping_fraction"].eq(1.0).all()
 
 
 def test_hemoglobin_interfaces(hemoglobin):
-    complexes = hemoglobin.interface_metrics_all()["complex"].set_index(["chain_a", "chain_b"])
+    complexes = hemoglobin.interface_tables()["complex"].set_index(["chain_a", "chain_b"])
     assert complexes.loc[("A", "B"), "n_contacts"] > 0
     assert complexes.loc[("B", "D"), "n_contacts"] == 0
     assert str(complexes.loc[("B", "D"), "dASA_A2"]) == "0.0"

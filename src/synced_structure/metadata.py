@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections import Counter
 
 from .base import StructureState
-from .sequence import cif_sequence, clean_val, to_list
+from .sequence import clean_cif_sequence, clean_cif_value, to_list
 
 ###################################### METADATA
 
@@ -39,12 +39,12 @@ class MetadataMixin(StructureState):
             raw = canonical[index] if index < len(canonical) else ""
             if not raw and index < len(original):
                 raw = original[index]
-            sequence = cif_sequence(raw) if raw else ""
+            sequence = clean_cif_sequence(raw) if raw else ""
             if sequence:
                 sequences[entity_id] = sequence
         return sequences
 
-    def _atom_pair_maps(self) -> None:
+    def _build_chain_id_maps(self) -> None:
         """Build label-to-author and author-to-label maps from atom_site, preferring polymer atoms.
 
         Each author ID maps to the label ID that occurs most often among its polymer atoms, so a
@@ -56,7 +56,7 @@ class MetadataMixin(StructureState):
         polymer: Counter[tuple[str, str]] = Counter()
         hetero: Counter[tuple[str, str]] = Counter()
         for group, raw_label, raw_auth in zip(groups, labels, auths):
-            label, auth = clean_val(raw_label), clean_val(raw_auth)
+            label, auth = clean_cif_value(raw_label), clean_cif_value(raw_auth)
             if label and auth:
                 (polymer if group == "ATOM" else hetero)[(label, auth)] += 1
         self._auth_to_label, self._label_to_auth = {}, {}
@@ -73,7 +73,7 @@ class MetadataMixin(StructureState):
         """
         label_entity: dict[str, str] = {}
         for raw_label, raw_entity in zip(self._field("_struct_asym.id"), self._field("_struct_asym.entity_id")):
-            label, entity = clean_val(raw_label), clean_val(raw_entity)
+            label, entity = clean_cif_value(raw_label), clean_cif_value(raw_entity)
             if label and entity:
                 label_entity[label] = entity
         if self.key_by == "auth":
@@ -82,7 +82,7 @@ class MetadataMixin(StructureState):
             pairs = [(key, key) for key in self._label_to_auth]
         return {key: label_entity[label] for key, label in pairs if label in label_entity}
 
-    def _entity_external_refs(self) -> dict[str, list[str]]:
+    def _entity_accessions(self) -> dict[str, list[str]]:
         """Return the external accessions of each entity from struct_ref.
 
         Returns:
@@ -91,7 +91,7 @@ class MetadataMixin(StructureState):
         refs: dict[str, list[str]] = {}
         for raw_entity, raw_accession in zip(self._field("_struct_ref.entity_id"),
                                              self._field("_struct_ref.pdbx_db_accession")):
-            entity, accession = clean_val(raw_entity), clean_val(raw_accession)
+            entity, accession = clean_cif_value(raw_entity), clean_cif_value(raw_accession)
             if entity and accession and accession not in refs.setdefault(entity, []):
                 refs[entity].append(accession)
         return refs
@@ -104,12 +104,12 @@ class MetadataMixin(StructureState):
         """
         descriptions: dict[str, str] = {}
         for raw_entity, raw_description in zip(self._field("_entity.id"), self._field("_entity.pdbx_description")):
-            entity, description = clean_val(raw_entity), clean_val(raw_description)
+            entity, description = clean_cif_value(raw_entity), clean_cif_value(raw_description)
             if entity and description:
                 descriptions[entity] = description
         return descriptions
 
-    def _label_of(self, chain_key: str) -> str:
+    def _label_id(self, chain_key: str) -> str:
         """Return the label chain ID of a chain key.
 
         Args:
@@ -121,7 +121,7 @@ class MetadataMixin(StructureState):
         key = str(chain_key)
         return key if self.key_by == "label" else self._auth_to_label.get(key, key)
 
-    def _auth_of(self, chain_key: str) -> str:
+    def _auth_id(self, chain_key: str) -> str:
         """Return the author chain ID of a chain key.
 
         Args:
@@ -133,7 +133,7 @@ class MetadataMixin(StructureState):
         key = str(chain_key)
         return key if self.key_by == "auth" else self._label_to_auth.get(key, key)
 
-    def _reference_for_chain(self, chain_id: str) -> str:
+    def _entity_reference(self, chain_id: str) -> str:
         """Return the reference sequence of a chain's entity.
 
         Args:
@@ -145,7 +145,7 @@ class MetadataMixin(StructureState):
         entity = self._entity_by_chain.get(str(chain_id))
         return self._reference_by_entity.get(entity, "") if entity else ""
 
-    def _resolve_entity(self, chain_id: str, explicit: str | None = None) -> str | None:
+    def _resolve_entity_id(self, chain_id: str, explicit: str | None = None) -> str | None:
         """Return the explicit entity ID, else the mmCIF entity, else the default entity ID.
 
         Args:

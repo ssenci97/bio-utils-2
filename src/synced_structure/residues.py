@@ -8,7 +8,7 @@ import copy
 
 import numpy as np
 import pandas as pd
-from Bio.PDB.Atom import Atom
+from Bio.PDB.Atom import Atom, DisorderedAtom
 from Bio.PDB.Chain import Chain
 from Bio.PDB.Residue import Residue
 
@@ -48,11 +48,11 @@ def residue_class(residue: Residue) -> str:
     return MOIETY_OTHER
 
 
-def is_heavy(atom: Atom) -> bool:
+def is_heavy_atom(atom: Atom | DisorderedAtom) -> bool:
     """Return True if an atom is not hydrogen.
 
     Args:
-        atom: Biopython Atom.
+        atom: Biopython Atom, or a DisorderedAtom (alternate locations).
 
     Returns:
         Whether the atom is a heavy atom.
@@ -60,7 +60,7 @@ def is_heavy(atom: Atom) -> bool:
     return (atom.element or atom.get_name()[:1]).strip().upper() != "H"
 
 
-def representative_coord(residue: Residue, moiety: str) -> np.ndarray | None:
+def contact_point_coord(residue: Residue, moiety: str) -> np.ndarray | None:
     """Return a residue's contact point in A.
 
     Protein uses C-alpha, nucleic acids C4' (or C1', then P), other residues the heavy-atom centroid.
@@ -73,7 +73,7 @@ def representative_coord(residue: Residue, moiety: str) -> np.ndarray | None:
         The contact point, or None if the residue has none.
     """
     if moiety == MOIETY_OTHER:
-        coords = [atom.coord for atom in residue.get_atoms() if is_heavy(atom)]
+        coords = [atom.coord for atom in residue.get_atoms() if is_heavy_atom(atom)]
         return np.mean(coords, axis=0) if coords else None
     for name in REPRESENTATIVE_ATOMS.get(moiety, ()):
         if name in residue:
@@ -98,7 +98,7 @@ def split_residues(chain: Chain) -> tuple[list[ResidueMoiety], list[ResidueMoiet
     return polymer, hetero
 
 
-def _reindex_children(chain: Chain) -> None:
+def _rebuild_residue_index(chain: Chain) -> None:
     """Rebuild a chain's ID index after its residue IDs change, keeping residue order.
 
     Args:
@@ -113,7 +113,7 @@ def _reindex_children(chain: Chain) -> None:
 class ResidueMixin(StructureState):
     """Residue tables, reference numbering, and trimming of unmapped residues."""
 
-    def _residue_frame(self, chain_id: str) -> pd.DataFrame:
+    def _chain_residue_table(self, chain_id: str) -> pd.DataFrame:
         """Return one row per polymer residue of a chain with 1-based sequence and reference indices.
 
         Args:
@@ -141,7 +141,7 @@ class ResidueMixin(StructureState):
         frame["reference_index"] = frame["reference_index"].astype("Int64")
         return frame
 
-    def get_residue_mapping(self, chain_id: str) -> pd.DataFrame:
+    def chain_residue_table(self, chain_id: str) -> pd.DataFrame:
         """Return the author number, sequence index, and reference index of each residue of a chain.
 
         Args:
@@ -150,7 +150,7 @@ class ResidueMixin(StructureState):
         Returns:
             Table with standard and author chain IDs, pdb_resnum, sequence_index, and reference_index.
         """
-        return self._residue_frame(self._require_chain(chain_id))[MAPPING_COLUMNS].reset_index(drop=True)
+        return self._chain_residue_table(self._chain_key(chain_id))[MAPPING_COLUMNS].reset_index(drop=True)
 
     @property
     def residue_table(self) -> pd.DataFrame:
@@ -161,7 +161,7 @@ class ResidueMixin(StructureState):
         """
         if not self.chains:
             return pd.DataFrame(columns=RESIDUE_COLUMNS)
-        return pd.concat([self._residue_frame(chain_id) for chain_id in self.chains], ignore_index=True)
+        return pd.concat([self._chain_residue_table(chain_id) for chain_id in self.chains], ignore_index=True)
 
     @property
     def moiety_table(self) -> pd.DataFrame:
@@ -188,7 +188,7 @@ class ResidueMixin(StructureState):
                 })
         return pd.DataFrame(rows, columns=MOIETY_SUMMARY_COLUMNS)
 
-    def chains_by_moiety(self, moiety: str) -> list[str]:
+    def chain_ids_by_moiety(self, moiety: str) -> list[str]:
         """Return the chain IDs that contain at least one residue of a biomolecule type.
 
         Args:
@@ -217,13 +217,13 @@ class ResidueMixin(StructureState):
         """
         for offset, (residue, _) in enumerate(pairs):
             residue.id = ("#", offset, " ")
-        _reindex_children(chain)
+        _rebuild_residue_index(chain)
         for residue, new_id in pairs:
             residue.id = new_id
-        _reindex_children(chain)
+        _rebuild_residue_index(chain)
 
     @staticmethod
-    def _renumber(chain: Chain) -> None:
+    def _renumber_polymers(chain: Chain) -> None:
         """Renumber a chain's polymer residues 1..N in place, leaving hetero residues untouched.
 
         Args:
@@ -234,7 +234,7 @@ class ResidueMixin(StructureState):
                                        for number, (residue, _) in enumerate(polymer, start=1)])
 
     @classmethod
-    def _keep_mapped(cls, chain: Chain, index_mapping: dict[int, int]) -> None:
+    def _trim_to_mapped(cls, chain: Chain, index_mapping: dict[int, int]) -> None:
         """Remove unmapped polymer residues and renumber the kept ones by reference position; hetero residues stay.
 
         Args:
@@ -259,12 +259,12 @@ class ResidueMixin(StructureState):
         Returns:
             This structure.
         """
-        selected = self.chain_ids if chain_ids is None else [self._require_chain(c) for c in chain_ids]
+        selected = self.chain_ids if chain_ids is None else [self._chain_key(c) for c in chain_ids]
         trimmed = []
         for chain_id in selected:
             mapping = self.chains[chain_id].sequence_index_to_ref_index
             if mapping:
-                self._keep_mapped(self.chains[chain_id].chain, mapping)
+                self._trim_to_mapped(self.chains[chain_id].chain, mapping)
                 trimmed.append(chain_id)
         self._build_chains()
         for chain_id in trimmed:
@@ -282,9 +282,9 @@ class ResidueMixin(StructureState):
         Returns:
             The renumbered chain.
         """
-        chain_id = self._require_chain(chain_id)
+        chain_id = self._chain_key(chain_id)
         chain = self.chains[chain_id].chain if in_place else copy.deepcopy(self.chains[chain_id].chain)
-        self._renumber(chain)
+        self._renumber_polymers(chain)
         if in_place:
             self._build_chains()
         return chain

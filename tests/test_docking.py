@@ -44,7 +44,7 @@ def _heavy_coords(structure, keys):
 # partners, numbering, and placement
 
 def test_segids_and_author_numbering(setup):
-    frame = setup.haddock_residue_map
+    frame = setup.residue_table
     ranges = frame.groupby(["segid", "chain_key"])["haddock_resid"].agg(["min", "max", "count"])
     assert ranges.loc[("A", "A")].tolist() == [103, 187, 85]
     assert ranges.loc[("B", "B")].tolist() == [1, 11, 11]
@@ -56,7 +56,7 @@ def test_segids_and_author_numbering(setup):
 def test_partner_renumbered_when_author_numbers_collide(sync, tmp_path):
     sync.renumber_chain("B", in_place=True)
     sync.renumber_chain("C", in_place=True)
-    frame = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path).haddock_residue_map
+    frame = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path).residue_table
     duplex = frame[frame["segid"] == "B"].groupby("chain_key")["haddock_resid"].agg(["min", "max"])
     assert duplex.loc["B"].tolist() == [1, 11]
     assert duplex.loc["C"].tolist() == [22, 32]
@@ -77,7 +77,7 @@ def test_partners_validated(sync, tmp_path):
 def test_same_structure_partners_are_separated(sync, setup, tmp_path):
     before = _heavy_coords(sync, ["A", "B", "C"]).copy()
     assert setup.separated and list(setup.placements) == [1]
-    moved = setup._transform(1, _heavy_coords(sync, ["B", "C"]))
+    moved = setup._place_coords(1, _heavy_coords(sync, ["B", "C"]))
     distances = np.linalg.norm(_heavy_coords(sync, ["A"])[:, None] - moved[None], axis=-1)
     assert distances.min() > setup.clearance_a
     rotation = setup.placements[1]["rotation"]
@@ -99,20 +99,20 @@ def test_separation_options(sync, tmp_path):
 # restraints
 
 def test_positions_resolve_in_every_numbering(setup):
-    assert setup._resolve("A", [3, 4], "reference") == (0, [103, 104])
-    assert setup._resolve("A", [1, 2], "sequence") == (0, [103, 104])
-    assert setup._resolve("A", [103, 104], "author") == (0, [103, 104])
-    assert setup._resolve("C", [1], "reference") == (1, [51])
-    assert setup._resolve("A", [1, 3], "reference") == (0, [103])
+    assert setup._haddock_numbers("A", [3, 4], "reference") == (0, [103, 104])
+    assert setup._haddock_numbers("A", [1, 2], "sequence") == (0, [103, 104])
+    assert setup._haddock_numbers("A", [103, 104], "author") == (0, [103, 104])
+    assert setup._haddock_numbers("C", [1], "reference") == (1, [51])
+    assert setup._haddock_numbers("A", [1, 3], "reference") == (0, [103])
     with pytest.raises(ValueError):
-        setup._resolve("A", [1, 2], "reference")
+        setup._haddock_numbers("A", [1, 2], "reference")
     with pytest.raises(ValueError):
-        setup._resolve("A", [3], "pdb")
+        setup._haddock_numbers("A", [3], "pdb")
 
 
 def test_ambiguous_restraints(setup):
     setup.add_ambiguous_restraints("A", [3, 4], "B", [2], passive_b=[3])
-    text = setup.restraint_file_text("ambiguous")
+    text = setup.restraint_text("ambiguous")
     assert text.count("assign") == 3
     assert "assign (resi 103 and segid A)" in text and "assign (resi 104 and segid A)" in text
     assert "assign (resi 2 and segid B)" in text and "assign (resi 3 and segid B)" not in text
@@ -124,11 +124,11 @@ def test_ambiguous_restraints(setup):
 
 def test_unambiguous_restraints_and_wrapping(setup):
     setup.add_unambiguous_restraint("A", [3, 4, 5, 9], "C", [1], numbering="reference", distance=(3.0, 3.0, 1.0))
-    text = setup.restraint_file_text("unambiguous")
+    text = setup.restraint_text("unambiguous")
     assert "(segid A and (resi 103:105 or resi 109))" in text
     assert "(segid B and resi 51) 3.0 3.0 1.0" in text
     setup.add_unambiguous_restraint("A", list(range(1, 90, 2)), "B", [2, 5, 8], numbering="sequence")
-    text = setup.restraint_file_text("unambiguous")
+    text = setup.restraint_text("unambiguous")
     assert max(len(line) for line in text.splitlines()) < 132
     _validate(text)
 
@@ -145,7 +145,7 @@ def test_restraints_need_two_partners(setup, sync, tmp_path):
     duplex = sync.subset_chains(["B", "C"])
     assert duplex["B"].chain_id == "A"
     keyed = sync.prepare_haddock_docking("A", (duplex, ["B", "C"]), workdir=tmp_path / "keyed")
-    assert keyed._locate("A") == (0, "A")
+    assert keyed._locate_chain("A") == (0, "A")
 
 
 def test_patch_pairs(setup):
@@ -167,7 +167,7 @@ def test_cluster_patches():
 
 
 def test_contact_restraints(setup, sync):
-    contacts = sync.compute_contacts(contact_type="inter", chain_ids=["A", "B", "C"])
+    contacts = sync.contact_table(contact_type="inter", chain_ids=["A", "B", "C"])
     protein = contacts[(contacts["auth_chain_1"] == "A") | (contacts["auth_chain_2"] == "A")]
     expected = set()
     for row in protein.itertuples():
@@ -263,7 +263,7 @@ def test_overrides_and_guards(sync, tmp_path):
 # files
 
 def test_written_files(sync, setup):
-    config = setup.write_inputs()
+    config = setup.export_inputs()
     paths = setup.input_paths
     assert config.is_file() and paths["unambiguous"].is_file() and not paths["ambiguous"].exists()
     written = sorted(path.name for path in setup.workdir.iterdir() if path.is_file())
@@ -284,18 +284,18 @@ def test_written_files(sync, setup):
 
 
 def test_load_model_restores_chains(sync, setup):
-    setup.write_inputs()
+    setup.export_inputs()
     model = setup.load_docked_model(setup.input_paths["reference"])
     assert sorted(model.chain_ids) == ["A", "B", "C"]
     for key in ("A", "B", "C"):
         assert model.get_sequence(key) == sync.get_sequence(key)
         assert model.get_reference_sequence(key) == sync.get_reference_sequence(key)
         assert [r.id for r in model[key].residues] == [r.id for r in sync[key].residues]
-    assert model.get_residue_mapping("A")["reference_index"].iloc[0] == 3
+    assert model.chain_residue_table("A")["reference_index"].iloc[0] == 3
 
 
 def test_run_guards(setup):
-    setup.write_inputs()
+    setup.export_inputs()
     setup.run_dir.mkdir()
     (setup.run_dir / "keep.txt").write_text("not ours")
     with pytest.raises(FileExistsError):
@@ -331,7 +331,7 @@ def finished(setup):
     """Return the set up with a fake finished run: two rigidbody models (one compressed) and a caprieval step."""
     import gzip
 
-    setup.write_inputs()
+    setup.export_inputs()
     rigid, capri = setup.run_dir / "1_rigidbody", setup.run_dir / "2_caprieval"
     rigid.mkdir(parents=True)
     capri.mkdir()
@@ -347,7 +347,7 @@ def finished(setup):
 
 
 def test_step_lookup(finished):
-    assert list(finished.run_steps()) == ["1_rigidbody", "2_caprieval"]
+    assert list(finished.step_paths()) == ["1_rigidbody", "2_caprieval"]
     paths = {finished._step_path(step) for step in ("rigidbody", 1, "1_rigidbody")}
     assert paths == {finished.run_dir / "1_rigidbody"}
     with pytest.raises(KeyError):
@@ -355,8 +355,8 @@ def test_step_lookup(finished):
 
 
 def test_scores_from_model_headers(finished, monkeypatch):
-    monkeypatch.setattr(HaddockDocking, "_io_rows", lambda self, folder: None)
-    scores = finished.haddock_scores("rigidbody")
+    monkeypatch.setattr(HaddockDocking, "_read_io_rows", lambda self, folder: None)
+    scores = finished.score_table("rigidbody")
     assert scores["model"].tolist() == ["rigidbody_2.pdb", "rigidbody_1.pdb"]
     assert scores["rank"].tolist() == [1, 2] and scores["score"].tolist() == [-90.0, -50.0]
     assert scores["vdw"].tolist() == [-30.0, -10.0] and scores["bsa"].tolist() == [1300.0, 900.0]
@@ -365,7 +365,7 @@ def test_scores_from_model_headers(finished, monkeypatch):
 
 
 def test_capri_tables_and_docked(finished, monkeypatch):
-    monkeypatch.setattr(HaddockDocking, "_io_rows", lambda self, folder: None)
+    monkeypatch.setattr(HaddockDocking, "_read_io_rows", lambda self, folder: None)
     tables = finished.caprieval_tables()
     models = tables["models"]
     assert models["caprieval_rank"].tolist() == [1, 2] and models["reference"].eq("best model").all()
@@ -382,7 +382,7 @@ def test_capri_tables_and_docked(finished, monkeypatch):
 
 
 def test_docked_without_caprieval(finished, monkeypatch):
-    monkeypatch.setattr(HaddockDocking, "_io_rows", lambda self, folder: None)
+    monkeypatch.setattr(HaddockDocking, "_read_io_rows", lambda self, folder: None)
     shutil.rmtree(finished.run_dir / "2_caprieval")
     (finished.run_dir / "1_rigidbody" / "io.json").write_text("{}")
     docked = finished.docked_model_table()
@@ -420,18 +420,18 @@ def test_haddock_oracle_run(sync, tmp_path):
     assert len(models) == 2 and {"irmsd", "fnat", "dockq"} <= set(models)
     assert models["reference"].eq("reference.pdb").all()
     assert all(path.is_file() for path in setup.docked_model_paths())
-    rigid, emref = setup.haddock_scores("rigidbody"), setup.haddock_scores("emref")
+    rigid, emref = setup.score_table("rigidbody"), setup.score_table("emref")
     assert len(rigid) == 4 and len(emref) == 4 and emref["origin"].str.startswith("rigidbody_").all()
-    assert setup.haddock_scores()["model"].tolist() == [path.name.removesuffix(".gz") for path in setup.docked_model_paths()]
+    assert setup.score_table()["model"].tolist() == [path.name.removesuffix(".gz") for path in setup.docked_model_paths()]
     docked_table = setup.docked_model_table()
     assert docked_table["path"].tolist() == setup.docked_model_paths() and {"seed", "origin", "dockq"} <= set(docked_table)
     assert len(setup.load_docked_models(top=2)) == 2
-    analysed = setup.run_caprieval_on_steps(["rigidbody"])["1_rigidbody"]["models"]
+    analysed = setup.run_caprieval(["rigidbody"])["1_rigidbody"]["models"]
     assert len(analysed) == 4 and analysed["path"].map(Path.is_file).all()
     assert setup.caprieval_tables("rigidbody")["models"]["reference"].eq("reference.pdb").all()
     docked = setup.load_docked_model(0)
     assert sorted(docked.chain_ids) == ["A", "B", "C"]
-    assert docked.chain_summary()["mapping_fraction"].eq(1.0).all()
+    assert docked.chain_table()["mapping_fraction"].eq(1.0).all()
     setup.run_haddock(overwrite=True)
 
 
@@ -444,7 +444,7 @@ def test_haddock_abinitio_run(sync, tmp_path):
     setup.run_haddock()
     tables = setup.caprieval_tables()
     assert {"models", "clusters"} <= set(tables) and tables["models"]["cluster_id"].notna().all()
-    assert setup.haddock_scores("seletopclusts")["cluster_id"].notna().all()
+    assert setup.score_table("seletopclusts")["cluster_id"].notna().all()
     assert sorted(setup.load_docked_model(0).chain_ids) == ["A", "B", "C"]
 
 

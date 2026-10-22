@@ -45,7 +45,7 @@ from .constants import (
     HADDOCK_RESTRAINT_KINDS, HADDOCK_RESTRAINT_MODULES, HADDOCK_SCORE_COLUMNS, HADDOCK_SEEDED_MODULES, HADDOCK_SEGIDS,
     HADDOCK_TBL_TERMS_PER_LINE, POLYMER_MOIETIES,
 )
-from .residues import is_heavy
+from .residues import is_heavy_atom
 from .utils import log_completion, log_info
 
 if TYPE_CHECKING:
@@ -136,7 +136,7 @@ class Placement(TypedDict):
 
 
 class InputPaths(TypedDict):
-    """Files written by HaddockDocking.write_inputs().
+    """Files written by HaddockDocking.export_inputs().
 
     Attributes:
         molecules: One PDB per partner.
@@ -226,7 +226,7 @@ def cluster_contact_patches(points: Sequence[tuple[float, float]], gap: float = 
     return sorted(clusters.values(), key=lambda members: members[0])
 
 
-def _toml_value(value: Any) -> str:
+def _toml_literal(value: Any) -> str:
     """Return a TOML literal for a bool, number, string, path, or list of these.
 
     Args:
@@ -247,7 +247,7 @@ def _toml_value(value: Any) -> str:
     if isinstance(value, (str, Path)):
         return json.dumps(str(value))
     if isinstance(value, (list, tuple)):
-        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+        return "[" + ", ".join(_toml_literal(item) for item in value) + "]"
     raise TypeError(f"Unsupported HADDOCK3 parameter value: {value!r}")
 
 
@@ -365,7 +365,7 @@ def _open_text(path: Path) -> IO[str]:
     return gzip.open(path, "rt") if path.suffix == ".gz" else open(path)
 
 
-def _remark_scores(path: PathLike) -> dict[str, float]:
+def _read_remark_scores(path: PathLike) -> dict[str, float]:
     """Return the HADDOCK score and energy terms from the REMARK header of a model PDB.
 
     Args:
@@ -428,7 +428,7 @@ def _read_model(path: PathLike) -> Structure:
     return PDBParser(QUIET=True).get_structure(path.name.split(".")[0], io.StringIO(text))
 
 
-def _step_parts(name: str) -> tuple[str, str]:
+def _split_step_name(name: str) -> tuple[str, str]:
     """Split a step folder name such as '3_emref'.
 
     Args:
@@ -560,7 +560,7 @@ class HaddockDocking:
                 raise TypeError("Each partner must be a (SyncedStructure, chain or list of chains) pair.")
             structure, chains = item
             names = [chains] if isinstance(chains, str) else list(chains)
-            keys = list(dict.fromkeys(structure._require_chain(chain) for chain in names))
+            keys = list(dict.fromkeys(structure._chain_key(chain) for chain in names))
             if not keys:
                 raise ValueError(f"Partner {index + 1} has no chains.")
             for key in keys:
@@ -617,9 +617,9 @@ class HaddockDocking:
         """
         return np.array([atom.coord for key in self.partners[index]["keys"]
                          for entry in self._chains[(index, key)]
-                         for atom in entry["residue"].get_atoms() if is_heavy(atom)], dtype=np.float64)
+                         for atom in entry["residue"].get_atoms() if is_heavy_atom(atom)], dtype=np.float64)
 
-    def _transform(self, index: int, coords: np.ndarray) -> np.ndarray:
+    def _place_coords(self, index: int, coords: np.ndarray) -> np.ndarray:
         """Return coordinates moved by a partner's placement, or unchanged when it has none.
 
         Args:
@@ -668,7 +668,7 @@ class HaddockDocking:
             placements[index] = {"rotation": rotation, "origin": centers[index], "center": center}
             placed.append((center, radii[index]))
         self.placements = placements
-        moved = [self._transform(index, xyz) for index, xyz in enumerate(coords)]
+        moved = [self._place_coords(index, xyz) for index, xyz in enumerate(coords)]
         for i, j in itertools.combinations(range(len(moved)), 2):
             if ChainMixin._coords_touch(moved[i], moved[j], self.clearance_a):
                 raise RuntimeError(f"Partners {i + 1} and {j + 1} are still within {self.clearance_a} A "
@@ -677,7 +677,7 @@ class HaddockDocking:
         return placements
 
     @property
-    def haddock_residue_map(self) -> pd.DataFrame:
+    def residue_table(self) -> pd.DataFrame:
         """One row per written residue: partner, segment ID, HADDOCK3 number, and the original numbering."""
         rows = []
         for (index, key), entries in self._chains.items():
@@ -700,7 +700,7 @@ class HaddockDocking:
 
 ###################################### RESTRAINT RESOLUTION
 
-    def _locate(self, chain: ChainSpec) -> ChainTarget:
+    def _locate_chain(self, chain: ChainSpec) -> ChainTarget:
         """Find the partner holding a chain.
 
         A chain key matches before a label or author ID, so 'A' means the chain keyed 'A' even when another
@@ -721,7 +721,7 @@ class HaddockDocking:
             index = int(number) - 1
             if not 0 <= index < len(self.partners):
                 raise ValueError(f"No partner number {number}.")
-            key = self.partners[index]["structure"]._require_chain(name)
+            key = self.partners[index]["structure"]._chain_key(name)
             if key not in self.partners[index]["keys"]:
                 raise ValueError(f"Chain {name} is not part of partner {number}.")
             return index, key
@@ -729,7 +729,7 @@ class HaddockDocking:
         if not matches:
             for index, partner in enumerate(self.partners):
                 try:
-                    key = partner["structure"]._require_chain(chain)
+                    key = partner["structure"]._chain_key(chain)
                 except KeyError:
                     continue
                 if key in partner["keys"]:
@@ -740,13 +740,13 @@ class HaddockDocking:
             raise ValueError(f"Chain {chain} matches several partners; pass (partner number, chain) instead.")
         return matches[0]
 
-    def _resolve(self, chain: ChainSpec, positions: Iterable[int], numbering: str) -> tuple[int, list[int]]:
+    def _haddock_numbers(self, chain: ChainSpec, positions: Iterable[int], numbering: str) -> tuple[int, list[int]]:
         """Translate 1-based positions on a chain into HADDOCK3 residue numbers.
 
         Positions that match no observed residue are logged and dropped.
 
         Args:
-            chain: Chain identifier, see _locate.
+            chain: Chain identifier, see _locate_chain.
             positions: 1-based positions.
             numbering: 'reference' (reference sequence), 'sequence' (observed sequence), or 'author' (PDB number).
 
@@ -758,7 +758,7 @@ class HaddockDocking:
         """
         if numbering not in HADDOCK_NUMBERINGS:
             raise ValueError(f"numbering must be one of {HADDOCK_NUMBERINGS}.")
-        index, key = self._locate(chain)
+        index, key = self._locate_chain(chain)
         lookup: dict[int, list[int]] = {}
         for entry in self._chains[(index, key)]:
             if numbering == "author":
@@ -785,7 +785,7 @@ class HaddockDocking:
             raise ValueError(f"None of the {numbering} positions given for chain {key} match an observed residue.")
         return index, sorted(resids)
 
-    def _check_pair(self, index_a: int, index_b: int) -> None:
+    def _check_partners_differ(self, index_a: int, index_b: int) -> None:
         """Check that two restrained selections belong to different partners.
 
         Args:
@@ -811,7 +811,7 @@ class HaddockDocking:
         Each active residue of one side must lie near any active or passive residue of the other side.
 
         Args:
-            chain_a: First chain, see _locate.
+            chain_a: First chain, see _locate_chain.
             active_a: 1-based positions of the active residues of chain_a.
             chain_b: Second chain, in another partner.
             active_b: 1-based positions of the active residues of chain_b.
@@ -828,11 +828,11 @@ class HaddockDocking:
             ValueError: If neither side has active residues.
         """
         act_in_a, act_in_b, pas_in_a, pas_in_b = (list(values) for values in (active_a, active_b, passive_a, passive_b))
-        index_a, act_a = self._resolve(chain_a, act_in_a, numbering) if act_in_a else (self._locate(chain_a)[0], [])
-        index_b, act_b = self._resolve(chain_b, act_in_b, numbering) if act_in_b else (self._locate(chain_b)[0], [])
-        pas_a = self._resolve(chain_a, pas_in_a, numbering)[1] if pas_in_a else []
-        pas_b = self._resolve(chain_b, pas_in_b, numbering)[1] if pas_in_b else []
-        self._check_pair(index_a, index_b)
+        index_a, act_a = self._haddock_numbers(chain_a, act_in_a, numbering) if act_in_a else (self._locate_chain(chain_a)[0], [])
+        index_b, act_b = self._haddock_numbers(chain_b, act_in_b, numbering) if act_in_b else (self._locate_chain(chain_b)[0], [])
+        pas_a = self._haddock_numbers(chain_a, pas_in_a, numbering)[1] if pas_in_a else []
+        pas_b = self._haddock_numbers(chain_b, pas_in_b, numbering)[1] if pas_in_b else []
+        self._check_partners_differ(index_a, index_b)
         if not act_a and not act_b:
             raise ValueError("Ambiguous restraints need active residues on at least one side.")
         self._restraints.append({
@@ -848,7 +848,7 @@ class HaddockDocking:
         """Add one unambiguous restraint joining a patch of chain_a to a patch of chain_b.
 
         Args:
-            chain_a: First chain, see _locate.
+            chain_a: First chain, see _locate_chain.
             positions_a: 1-based positions of the residues of the first patch.
             chain_b: Second chain, in another partner.
             positions_b: 1-based positions of the residues of the second patch.
@@ -862,9 +862,9 @@ class HaddockDocking:
         Raises:
             ValueError: If either patch has no residues.
         """
-        index_a, resids_a = self._resolve(chain_a, positions_a, numbering)
-        index_b, resids_b = self._resolve(chain_b, positions_b, numbering)
-        self._check_pair(index_a, index_b)
+        index_a, resids_a = self._haddock_numbers(chain_a, positions_a, numbering)
+        index_b, resids_b = self._haddock_numbers(chain_b, positions_b, numbering)
+        self._check_partners_differ(index_a, index_b)
         if not resids_a or not resids_b:
             raise ValueError("Unambiguous restraints need residues on both sides.")
         self._restraints.append({
@@ -928,7 +928,7 @@ class HaddockDocking:
             resolved = {key: (index, key) for index, partner in enumerate(self.partners)
                         for key in partner["keys"] if key in source}
         else:
-            resolved = {source._require_chain(source_chain): self._locate(chain)
+            resolved = {source._chain_key(source_chain): self._locate_chain(chain)
                         for chain, source_chain in chain_map.items()}
         if len({index for index, _ in resolved.values()}) < 2:
             raise ValueError("The source structure must hold chains of at least two partners.")
@@ -959,7 +959,7 @@ class HaddockDocking:
         inverse = {ref: seq for seq, ref in target_map.items()}
         return inverse.get(reference_index)
 
-    def partner_contact_pairs(self, cutoff: float = CONTACTS_CUTOFF_NM, scheme: str = "ca",
+    def partner_contact_map(self, cutoff: float = CONTACTS_CUTOFF_NM, scheme: str = "ca",
                               source: SyncedStructure | None = None, chain_map: Mapping[ChainSpec, str] | None = None,
                               ) -> dict[tuple[ChainTarget, ChainTarget], list[tuple[int, int]]]:
         """Return the contacts between partners, per chain pair.
@@ -976,7 +976,7 @@ class HaddockDocking:
             {((partner, chain), (partner, chain)): sorted (sequence_index_a, sequence_index_b) pairs}, 0-based.
         """
         source, resolved = self._contact_source(source, chain_map)
-        contacts = source.compute_contacts(cutoff=cutoff, contact_type="inter", chain_ids=list(resolved),
+        contacts = source.contact_table(cutoff=cutoff, contact_type="inter", chain_ids=list(resolved),
                                            scheme=scheme, moieties=POLYMER_MOIETIES)
         key_of = {record.chain_id: key for key, record in source.chains.items()}
         pairs: dict[tuple[ChainTarget, ChainTarget], list[tuple[int, int]]] = {}
@@ -1029,7 +1029,7 @@ class HaddockDocking:
         """
         if kind not in HADDOCK_RESTRAINT_KINDS:
             raise ValueError(f"kind must be one of {HADDOCK_RESTRAINT_KINDS}.")
-        pairs = self.partner_contact_pairs(cutoff=cutoff, scheme=scheme, source=source, chain_map=chain_map)
+        pairs = self.partner_contact_map(cutoff=cutoff, scheme=scheme, source=source, chain_map=chain_map)
         if not pairs:
             raise ValueError("No contacts between partners at this cutoff.")
         for (target_a, target_b), contacts in pairs.items():
@@ -1039,7 +1039,7 @@ class HaddockDocking:
                                               sorted({b + 1 for _, b in contacts}), numbering="sequence",
                                               distance=distance, origin="contacts")
                 continue
-            axes = [self._patch_axis(target, [pair[side] for pair in contacts])
+            axes = [self._patch_positions(target, [pair[side] for pair in contacts])
                     for side, target in enumerate((target_a, target_b))]
             points = [(axes[0][a], axes[1][b]) for a, b in contacts]
             for members in cluster_contact_patches(points, patch_gap):
@@ -1057,7 +1057,7 @@ class HaddockDocking:
         log_info(f"HADDOCK3: added {kind} restraints from contacts between {len(pairs)} chain pair(s).")
         return self
 
-    def _patch_axis(self, target: ChainTarget, seq_indices: Sequence[int]) -> dict[int, int]:
+    def _patch_positions(self, target: ChainTarget, seq_indices: Sequence[int]) -> dict[int, int]:
         """Return the clustering position of contacted residues: reference positions when all are mapped.
 
         Args:
@@ -1099,7 +1099,7 @@ class HaddockDocking:
         """Contact patches behind unambiguous contact restraints, in HADDOCK3 residue numbers."""
         return pd.DataFrame(self._patches, columns=HADDOCK_PATCH_COLUMNS)
 
-    def restraint_file_text(self, kind: str) -> str:
+    def restraint_text(self, kind: str) -> str:
         """Return the CNS restraint file text of one kind.
 
         Args:
@@ -1144,11 +1144,11 @@ class HaddockDocking:
 
     @property
     def input_paths(self) -> InputPaths:
-        """Paths of the files write_inputs() creates."""
+        """Paths of the files export_inputs() creates."""
         inputs = self.workdir / "inputs"
         return {
-            "molecules": [inputs / f"partner_{partner['segid']}_{self._safe(partner['structure'].structure_id)}"
-                                   f"_{'-'.join(self._safe(key) for key in partner['keys'])}.pdb"
+            "molecules": [inputs / f"partner_{partner['segid']}_{self._safe_name(partner['structure'].structure_id)}"
+                                   f"_{'-'.join(self._safe_name(key) for key in partner['keys'])}.pdb"
                           for partner in self.partners],
             "reference": inputs / "reference.pdb",
             "ambiguous": self.workdir / "restraints" / "ambig.tbl",
@@ -1171,7 +1171,7 @@ class HaddockDocking:
         return paths["ambiguous"] if kind == "ambiguous" else paths["unambiguous"]
 
     @staticmethod
-    def _safe(text: object) -> str:
+    def _safe_name(text: object) -> str:
         """Return text usable in a file name.
 
         Args:
@@ -1212,7 +1212,7 @@ class HaddockDocking:
             raise ValueError("The 'eval' method needs patch couples; add them with add_patch_pair_restraints().")
 
     def _reference_path(self) -> Path | None:
-        """Return the reference complex for caprieval and run_caprieval_on_steps().
+        """Return the reference complex for caprieval and run_caprieval().
 
         Returns:
             The reference path, or None when none is available.
@@ -1298,9 +1298,9 @@ class HaddockDocking:
                     "molecules": [str(path) for path in self.input_paths["molecules"]],
                     "ncores": self.ncores, "mode": "local", **self.global_params}
         lines = [f"# HADDOCK3 configuration written by synced_structure (method: {self.method}, seed: {self.seed})"]
-        lines += [f"{name} = {_toml_value(value)}" for name, value in globals_.items()]
+        lines += [f"{name} = {_toml_literal(value)}" for name, value in globals_.items()]
         for name, params in self.workflow_modules():
-            lines += ["", f"[{name}]"] + [f"{key} = {_toml_value(value)}" for key, value in params.items()]
+            lines += ["", f"[{name}]"] + [f"{key} = {_toml_literal(value)}" for key, value in params.items()]
         return "\n".join(lines) + "\n"
 
 ###################################### WRITING
@@ -1325,11 +1325,11 @@ class HaddockDocking:
                     residue = entry["residue"]
                     resname = residue.get_resname().strip().upper()
                     for atom in residue.get_atoms():
-                        if not is_heavy(atom):
+                        if not is_heavy_atom(atom):
                             continue
                         coord = atom.coord.astype(np.float64)
                         if placed:
-                            coord = self._transform(index, coord[None])[0]
+                            coord = self._place_coords(index, coord[None])[0]
                         lines.append(_pdb_atom_line(serial, atom, resname, partner["segid"], entry["resid"], coord))
                         serial += 1
                 lines.append("TER")
@@ -1358,7 +1358,7 @@ class HaddockDocking:
         except Exception as error:
             raise ValueError(f"HADDOCK3 rejected the restraints in {path}: {error}") from error
 
-    def write_inputs(self) -> Path:
+    def export_inputs(self) -> Path:
         """Write partner PDBs, the reference, restraint files, the residue map, and config.toml.
 
         Returns:
@@ -1372,7 +1372,7 @@ class HaddockDocking:
         if self._reference == "auto" and self._reference_path() == paths["reference"]:
             self._write_pdb(paths["reference"], range(len(self.partners)), placed=False)
         for kind in HADDOCK_RESTRAINT_KINDS:
-            text = self.restraint_file_text(kind)
+            text = self.restraint_text(kind)
             restraint_path = self._restraint_path(kind)
             if text:
                 restraint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1380,14 +1380,14 @@ class HaddockDocking:
                 self._validate_tbl(text, restraint_path)
             elif restraint_path.exists():
                 restraint_path.unlink()
-        self.haddock_residue_map.to_csv(paths["haddock_residue_map"], sep=EXPORT_SEP, index=False)
+        self.residue_table.to_csv(paths["haddock_residue_map"], sep=EXPORT_SEP, index=False)
         paths["config"].write_text(config)
         log_completion(start, f"Wrote HADDOCK3 '{self.method}' set up in {self.workdir}")
         return paths["config"]
 
 ###################################### RUNNING
 
-    def _executable(self, name: str = HADDOCK_EXECUTABLE) -> str:
+    def _find_executable(self, name: str = HADDOCK_EXECUTABLE) -> str:
         """Find a haddock3 command.
 
         Args:
@@ -1410,7 +1410,7 @@ class HaddockDocking:
         raise FileNotFoundError(f"{name} executable not found; install haddock3 with 'pip install haddock3' "
                                 "or pass haddock3_exe=.")
 
-    def _call(self, args: Sequence[str], log_path: Path, name: str = HADDOCK_EXECUTABLE) -> None:
+    def _run_command(self, args: Sequence[str], log_path: Path, name: str = HADDOCK_EXECUTABLE) -> None:
         """Run a haddock3 command, writing its output to a log file.
 
         Args:
@@ -1422,7 +1422,7 @@ class HaddockDocking:
             RuntimeError: If the command exits with a nonzero code.
         """
         with open(log_path, "w") as handle:
-            process = subprocess.run([self._executable(name), *args], cwd=self.workdir, stdout=handle,
+            process = subprocess.run([self._find_executable(name), *args], cwd=self.workdir, stdout=handle,
                                      stderr=subprocess.STDOUT)
         if process.returncode != 0:
             raise RuntimeError(f"{name} exited with code {process.returncode}; see {log_path}\n{_log_tail(log_path)}")
@@ -1433,14 +1433,14 @@ class HaddockDocking:
         Returns:
             self.
         """
-        self.write_inputs()
+        self.export_inputs()
         scratch = self.workdir / "setup_check"
         config = self.workdir / "config_setup_check.toml"
         if scratch.exists():
             shutil.rmtree(scratch)
         config.write_text(self.config_toml(run_dir=scratch))
         try:
-            self._call([str(config), "--setup"], self.workdir / "haddock3_setup_check.log")
+            self._run_command([str(config), "--setup"], self.workdir / "haddock3_setup_check.log")
         finally:
             if scratch.exists():
                 shutil.rmtree(scratch)
@@ -1461,7 +1461,7 @@ class HaddockDocking:
             FileExistsError: If the run directory exists and may not be deleted.
         """
         start = time.perf_counter()
-        config = self.write_inputs()
+        config = self.export_inputs()
         sentinel = self.workdir / RUN_SENTINEL
         if self.run_dir.exists() and any(self.run_dir.iterdir()):
             if not overwrite:
@@ -1470,13 +1470,13 @@ class HaddockDocking:
                 raise FileExistsError(f"{self.run_dir} was not created by HaddockDocking and is not deleted.")
             shutil.rmtree(self.run_dir)
         sentinel.write_text(f"{self.run_dir}\n")
-        self._call([str(config)], self.input_paths["log"])
+        self._run_command([str(config)], self.input_paths["log"])
         log_completion(start, f"HADDOCK3 '{self.method}' run finished in {self.run_dir}")
         return self
 
 ###################################### RESULTS
 
-    def run_steps(self) -> dict[str, Path]:
+    def step_paths(self) -> dict[str, Path]:
         """Return the step folders of the run directory.
 
         Returns:
@@ -1503,22 +1503,22 @@ class HaddockDocking:
         Raises:
             KeyError: If the run has no such step.
         """
-        steps = self.run_steps()
+        steps = self.step_paths()
         if str(step) in steps:
             return steps[str(step)]
         part = 0 if isinstance(step, (int, np.integer)) else 1
-        matches = [path for name, path in steps.items() if _step_parts(name)[part] == str(step)]
+        matches = [path for name, path in steps.items() if _split_step_name(name)[part] == str(step)]
         if not matches:
             raise KeyError(f"No step {step!r} in {self.run_dir}; steps are {list(steps)}.")
         return matches[-1]
 
-    def _caprieval_steps(self) -> list[Path]:
+    def _caprieval_step_paths(self) -> list[Path]:
         """Return the caprieval step folders of the run, in workflow order.
 
         Returns:
             Caprieval step folders.
         """
-        return [path for name, path in self.run_steps().items() if _step_parts(name)[1] == "caprieval"]
+        return [path for name, path in self.step_paths().items() if _split_step_name(name)[1] == "caprieval"]
 
     @staticmethod
     def _model_path(folder: PathLike, model: PathLike) -> Path:
@@ -1536,7 +1536,7 @@ class HaddockDocking:
             path = Path(f"{path}.gz")
         return path
 
-    def _read_capri(self, folder: Path) -> dict[str, pd.DataFrame]:
+    def _read_capri_tables(self, folder: Path) -> dict[str, pd.DataFrame]:
         """Read the caprieval tables of a folder.
 
         Args:
@@ -1558,7 +1558,7 @@ class HaddockDocking:
             tables["clusters"] = pd.read_csv(folder / "capri_clt.tsv", sep="\t", comment="#")
         return tables
 
-    def _io_rows(self, folder: Path) -> list[Record] | None:
+    def _read_io_rows(self, folder: Path) -> list[Record] | None:
         """Read one row per output model of a step from its io.json.
 
         Decoding needs jsonpickle and haddock3 importable, as io.json stores haddock3 objects.
@@ -1591,7 +1591,7 @@ class HaddockDocking:
             })
         return rows
 
-    def _remark_rows(self, folder: Path) -> list[Record]:
+    def _read_remark_rows(self, folder: Path) -> list[Record]:
         """Read one row per model file of a step from the HADDOCK REMARK header of each PDB.
 
         Args:
@@ -1604,12 +1604,12 @@ class HaddockDocking:
         rows: list[Record] = []
         for path in files:
             row: Record = {"step": folder.name, "model": path.name.removesuffix(".gz"), "path": path.resolve(),
-                           **_remark_scores(path)}
+                           **_read_remark_scores(path)}
             if "score" in row:
                 rows.append(row)
         return rows
 
-    def haddock_scores(self, step: StepRef | None = None) -> pd.DataFrame:
+    def score_table(self, step: StepRef | None = None) -> pd.DataFrame:
         """Return the HADDOCK scores of every model of a step, best first, with a model path and energy terms.
 
         Rows come from the step's io.json, which also gives clusters, origin, and seed; without haddock3 importable,
@@ -1625,16 +1625,16 @@ class HaddockDocking:
             FileNotFoundError: If no step has an io.json, or the step has no scored models.
         """
         if step is None:
-            folders = [path for path in self.run_steps().values() if (path / "io.json").is_file()]
+            folders = [path for path in self.step_paths().values() if (path / "io.json").is_file()]
             if not folders:
                 raise FileNotFoundError(f"No step of {self.run_dir} has an io.json.")
             folders = folders[::-1]
         else:
             folders = [self._step_path(step)]
         for folder in folders:
-            rows = self._io_rows(folder)
+            rows = self._read_io_rows(folder)
             if rows is None:
-                rows = self._remark_rows(folder)
+                rows = self._read_remark_rows(folder)
             if rows:
                 break
         else:
@@ -1652,7 +1652,7 @@ class HaddockDocking:
         """Return the caprieval tables of a step.
 
         Args:
-            step: None for the last caprieval step; a caprieval step; or a step analysed with run_caprieval_on_steps().
+            step: None for the last caprieval step; a caprieval step; or a step analysed with run_caprieval().
 
         Returns:
             {'models': capri_ss} with absolute model paths, plus 'clusters' (capri_clt) when present.
@@ -1661,25 +1661,25 @@ class HaddockDocking:
             FileNotFoundError: If the run or step has no caprieval tables.
         """
         if step is None:
-            folders = self._caprieval_steps()
+            folders = self._caprieval_step_paths()
             if not folders:
                 raise FileNotFoundError("The run has no caprieval step; run with caprieval=True "
-                                        "or use run_caprieval_on_steps().")
-            return self._read_capri(folders[-1])
+                                        "or use run_caprieval().")
+            return self._read_capri_tables(folders[-1])
         folder = self._step_path(step)
-        if _step_parts(folder.name)[1] == "caprieval":
-            return self._read_capri(folder)
+        if _split_step_name(folder.name)[1] == "caprieval":
+            return self._read_capri_tables(folder)
         analysed = self.run_dir / "analysis" / f"{folder.name}_analysis"
         if not (analysed / "capri_ss.tsv").is_file():
             raise FileNotFoundError(f"{folder.name} has no caprieval tables; "
-                                    f"call run_caprieval_on_steps(['{folder.name}']) first.")
-        return self._read_capri(analysed)
+                                    f"call run_caprieval(['{folder.name}']) first.")
+        return self._read_capri_tables(analysed)
 
     def docked_model_table(self, step: StepRef | None = None) -> pd.DataFrame:
         """Return the final models, best first: caprieval metrics, HADDOCK score and energies, and model path.
 
         The rows are the models that docked_model_paths() and load_docked_model() return. Without a caprieval step
-        the table is haddock_scores() of the last step with models.
+        the table is score_table() of the last step with models.
 
         Args:
             step: Caprieval or analysed step, as in caprieval_tables(); None for the last caprieval step.
@@ -1687,10 +1687,10 @@ class HaddockDocking:
         Returns:
             One row per model.
         """
-        if step is None and not self._caprieval_steps():
-            return self.haddock_scores()
+        if step is None and not self._caprieval_step_paths():
+            return self.score_table()
         models = self.caprieval_tables(step)["models"]
-        extra_rows = self._io_rows(self._step_path(step) if step is not None else self._caprieval_steps()[-1])
+        extra_rows = self._read_io_rows(self._step_path(step) if step is not None else self._caprieval_step_paths()[-1])
         if extra_rows:
             extra = pd.DataFrame(extra_rows)
             keep = ["path"] + [column for column in extra.columns
@@ -1722,7 +1722,7 @@ class HaddockDocking:
         paths = self.docked_model_paths(step)[:top]
         return {Path(path).name.split(".")[0]: self.load_docked_model(path) for path in paths}
 
-    def run_caprieval_on_steps(self, steps: StepRef | Iterable[StepRef],
+    def run_caprieval(self, steps: StepRef | Iterable[StepRef],
                                ncores: int | None = None) -> dict[str, dict[str, pd.DataFrame]]:
         """Run caprieval on finished steps with haddock3-analyse.
 
@@ -1752,7 +1752,7 @@ class HaddockDocking:
         if reference is not None:
             args += ["-p", "reference_fname", str(reference)]
         log_path = self.workdir / "haddock3_analyse.log"
-        self._call(args, log_path, name=HADDOCK_ANALYSE_EXECUTABLE)
+        self._run_command(args, log_path, name=HADDOCK_ANALYSE_EXECUTABLE)
         missing = [folder.name for folder in folders
                    if not (self.run_dir / "analysis" / f"{folder.name}_analysis" / "capri_ss.tsv").is_file()]
         if missing:
@@ -1802,7 +1802,7 @@ class HaddockDocking:
             loaded.set_reference_sequence(new_key, record.reference_sequence)
             if record.entity_id is not None:
                 loaded.set_entity_id(new_key, record.entity_id)
-            loaded.set_external_ref(new_key, source.get_external_ref(key))
+            loaded.set_accession(new_key, source.get_accession(key))
         return loaded
 
 ###################################### STRUCTURE MIXIN

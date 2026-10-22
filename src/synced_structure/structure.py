@@ -22,7 +22,7 @@ from .interface_metrics import InterfaceMixin
 from .loaders import LoaderMixin
 from .metadata import MetadataMixin
 from .residues import ResidueMixin
-from .utils import resolve_config
+from .utils import load_config
 from .viz3d import Viz3DMixin
 
 ###################################### SYNCHRONIZED STRUCTURE
@@ -58,15 +58,15 @@ class SyncedStructure(LoaderMixin, MetadataMixin, ChainMixin, AlignmentMixin, Re
         self.file_format = str(file_format).lower()
         self.mmcif_dict = mmcif_dict or {}
         self.default_entity_id = None if default_entity_id is None else str(default_entity_id)
-        self.config = resolve_config(config_path, DEFAULT_CONFIG, CONFIG_SECTION)
+        self.config = load_config(config_path, DEFAULT_CONFIG, CONFIG_SECTION)
         self.model = next(structure.get_models())
         self.chains = {}
         self._global_aligner = make_global_aligner()
         self._local_aligner = make_local_aligner(self.config)
         self._alignment_cache = {}
         self._interface_cache = {}
-        self._atom_pair_maps()
+        self._build_chain_id_maps()
         self._reference_by_entity = self._entity_sequences()
         self._entity_by_chain = self._chain_entity_map()
-        self._external_refs = self._entity_external_refs()
+        self._external_refs = self._entity_accessions()
         self._build_chains()

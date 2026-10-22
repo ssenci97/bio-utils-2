@@ -21,7 +21,7 @@ from .constants import (
     POLYMER_MOIETIES, RENAME_COLUMNS,
 )
 from .residues import split_residues
-from .sequence import clean_sequence, residue_to_letter
+from .sequence import clean_sequence, one_letter_code
 from .utils import log_info
 
 if TYPE_CHECKING:
@@ -88,7 +88,7 @@ class ChainRecord:
 class ChainMixin(StructureState):
     """Chain lifecycle, reference sequence mapping, chain renaming, and per-chain summaries."""
 
-    def _require_chain(self, chain_id: str) -> str:
+    def _chain_key(self, chain_id: str) -> str:
         """Return the chain key matching a key, standard ID, or author ID.
 
         Args:
@@ -109,7 +109,7 @@ class ChainMixin(StructureState):
                     return key
         raise KeyError(f"Unknown chain: {chain_id}")
 
-    def _map_to_reference(self, sequence: str, reference: str) -> dict[int, int]:
+    def _reference_index_map(self, sequence: str, reference: str) -> dict[int, int]:
         """Map observed to reference positions with a global alignment; the only such mapping in the package.
 
         Args:
@@ -128,7 +128,7 @@ class ChainMixin(StructureState):
             if ref_index >= 0 and seq_index >= 0
         }
 
-    def _make_chain_data(self, chain: Chain, reference_sequence: str | None = None, entity_id: str | None = None,
+    def _make_chain_record(self, chain: Chain, reference_sequence: str | None = None, entity_id: str | None = None,
                          metadata: Mapping[str, Any] | None = None, external_ref: str | None = None,
                          refseq_id: str | None = None) -> ChainRecord:
         """Build the record of a chain from its residues and metadata.
@@ -147,14 +147,14 @@ class ChainMixin(StructureState):
         key = str(chain.id)
         polymer, hetero = split_residues(chain)
         if reference_sequence is None:
-            reference_sequence = self._reference_for_chain(key)
-        sequence = "".join(residue_to_letter(residue, moiety) for residue, moiety in polymer)
+            reference_sequence = self._entity_reference(key)
+        sequence = "".join(one_letter_code(residue, moiety) for residue, moiety in polymer)
         reference_sequence = clean_sequence(reference_sequence)
         record = ChainRecord(
             chain=chain,
-            chain_id=self._label_of(key),
-            auth_chain_id=self._auth_of(key),
-            entity_id=self._resolve_entity(key, entity_id),
+            chain_id=self._label_id(key),
+            auth_chain_id=self._auth_id(key),
+            entity_id=self._resolve_entity_id(key, entity_id),
             residues=[residue for residue, _ in polymer],
             moieties=[moiety for _, moiety in polymer],
             hetero=hetero,
@@ -164,7 +164,7 @@ class ChainMixin(StructureState):
             external_ref=external_ref,
             refseq_id=refseq_id,
         )
-        record.sequence_index_to_ref_index = self._map_to_reference(sequence, reference_sequence)
+        record.sequence_index_to_ref_index = self._reference_index_map(sequence, reference_sequence)
         return record
 
     def _build_chains(self) -> None:
@@ -181,7 +181,7 @@ class ChainMixin(StructureState):
                 "external_ref": old.external_ref,
                 "refseq_id": old.refseq_id,
             }
-            rebuilt[key] = self._make_chain_data(chain, **kept)
+            rebuilt[key] = self._make_chain_record(chain, **kept)
         self.chains = rebuilt
         self._interface_cache.clear()
 
@@ -199,7 +199,7 @@ class ChainMixin(StructureState):
         Returns:
             The chain record.
         """
-        return self.chains[self._require_chain(chain_id)]
+        return self.chains[self._chain_key(chain_id)]
 
     def __iter__(self) -> Iterator[ChainRecord]:
         """Iterate over chain records.
@@ -227,7 +227,7 @@ class ChainMixin(StructureState):
             Whether a loaded chain matches.
         """
         try:
-            self._require_chain(str(chain_id))
+            self._chain_key(str(chain_id))
             return True
         except KeyError:
             return False
@@ -241,7 +241,7 @@ class ChainMixin(StructureState):
         Returns:
             The observed sequence.
         """
-        return self.chains[self._require_chain(chain_id)].sequence
+        return self.chains[self._chain_key(chain_id)].sequence
 
     def get_reference_sequence(self, chain_id: str) -> str:
         """Return the reference sequence of a chain.
@@ -252,9 +252,9 @@ class ChainMixin(StructureState):
         Returns:
             The reference sequence.
         """
-        return self.chains[self._require_chain(chain_id)].reference_sequence
+        return self.chains[self._chain_key(chain_id)].reference_sequence
 
-    def get_external_ref(self, chain_id: str) -> str | None:
+    def get_accession(self, chain_id: str) -> str | None:
         """Return the external reference of a chain: the user-set value, else the mmCIF accession.
 
         Args:
@@ -263,12 +263,12 @@ class ChainMixin(StructureState):
         Returns:
             The reference, or None if there is none.
         """
-        data = self.chains[self._require_chain(chain_id)]
+        data = self.chains[self._chain_key(chain_id)]
         if data.external_ref:
             return data.external_ref
         return ", ".join(self._external_refs.get(data.entity_id or "", [])) or None
 
-    def set_external_ref(self, chain_id: str, external_ref: str | None) -> Self:
+    def set_accession(self, chain_id: str, external_ref: str | None) -> Self:
         """Set a chain's external reference, overriding the mmCIF value in summaries.
 
         Args:
@@ -278,11 +278,11 @@ class ChainMixin(StructureState):
         Returns:
             This structure.
         """
-        chain_id = self._require_chain(chain_id)
+        chain_id = self._chain_key(chain_id)
         self.chains[chain_id].external_ref = None if external_ref is None else str(external_ref)
         return self
 
-    def get_refseq_id(self, chain_id: str) -> str | None:
+    def get_reference_id(self, chain_id: str) -> str | None:
         """Return the ID of a chain's reference sequence: the user-set value, else the external reference.
 
         Args:
@@ -291,10 +291,10 @@ class ChainMixin(StructureState):
         Returns:
             The reference sequence ID, or None.
         """
-        data = self.chains[self._require_chain(chain_id)]
-        return data.refseq_id or self.get_external_ref(chain_id)
+        data = self.chains[self._chain_key(chain_id)]
+        return data.refseq_id or self.get_accession(chain_id)
 
-    def set_refseq_id(self, chain_id: str, refseq_id: str | None) -> Self:
+    def set_reference_id(self, chain_id: str, refseq_id: str | None) -> Self:
         """Set the ID of a chain's reference sequence, which may differ from its external reference.
 
         Args:
@@ -304,7 +304,7 @@ class ChainMixin(StructureState):
         Returns:
             This structure.
         """
-        chain_id = self._require_chain(chain_id)
+        chain_id = self._chain_key(chain_id)
         self.chains[chain_id].refseq_id = None if refseq_id is None else str(refseq_id)
         return self
 
@@ -319,7 +319,7 @@ class ChainMixin(StructureState):
         Returns:
             This structure.
         """
-        self.chains[self._require_chain(chain_id)].metadata[str(key)] = value
+        self.chains[self._chain_key(chain_id)].metadata[str(key)] = value
         return self
 
     def set_entity_id(self, chain_id: str, entity_id: str) -> Self:
@@ -332,7 +332,7 @@ class ChainMixin(StructureState):
         Returns:
             This structure.
         """
-        self.chains[self._require_chain(chain_id)].entity_id = str(entity_id)
+        self.chains[self._chain_key(chain_id)].entity_id = str(entity_id)
         return self
 
     def set_reference_sequence(self, chain_id: str, sequence: str, remap: bool = True) -> Self:
@@ -346,11 +346,11 @@ class ChainMixin(StructureState):
         Returns:
             This structure.
         """
-        chain_id = self._require_chain(chain_id)
+        chain_id = self._chain_key(chain_id)
         data = self.chains[chain_id]
         data.reference_sequence = clean_sequence(sequence)
         if remap:
-            data.sequence_index_to_ref_index = self._map_to_reference(data.sequence, data.reference_sequence)
+            data.sequence_index_to_ref_index = self._reference_index_map(data.sequence, data.reference_sequence)
         else:
             data.sequence_index_to_ref_index = {}
             log_info(f"{self.structure_id}: {chain_id} has no residue mapping until remapped.")
@@ -379,7 +379,7 @@ class ChainMixin(StructureState):
         Returns:
             This structure.
         """
-        chain_id = self._require_chain(chain_id)
+        chain_id = self._chain_key(chain_id)
         self.set_reference_sequence(chain_id, self.chains[chain_id].reference_sequence, remap=True)
         log_info(f"{self.structure_id}: remapped {chain_id}")
         return self
@@ -404,7 +404,7 @@ class ChainMixin(StructureState):
             entity_id: Entity ID, or None.
             metadata: Metadata values, or None.
         """
-        chain_id = self._require_chain(chain_id)
+        chain_id = self._chain_key(chain_id)
         if reference_sequence is not None:
             self.set_reference_sequence(chain_id, reference_sequence)
         if entity_id is not None:
@@ -431,7 +431,7 @@ class ChainMixin(StructureState):
         """
         key = str(chain.id)
         try:
-            existing: str | None = self._require_chain(key)
+            existing: str | None = self._chain_key(key)
         except KeyError:
             existing = None
         if existing is not None:
@@ -452,7 +452,7 @@ class ChainMixin(StructureState):
         Returns:
             This structure.
         """
-        chain_id = self._require_chain(chain_id)
+        chain_id = self._chain_key(chain_id)
         self.model.detach_child(chain_id)
         self.chains.pop(chain_id, None)
         self._alignment_cache.pop(chain_id, None)
@@ -474,7 +474,7 @@ class ChainMixin(StructureState):
         Raises:
             ValueError: If no chain is given.
         """
-        keep = [self._require_chain(chain_id) for chain_id in chain_ids]
+        keep = [self._chain_key(chain_id) for chain_id in chain_ids]
         if not keep:
             raise ValueError("subset_chains needs at least one chain.")
         shared = (self.mmcif_dict, self._global_aligner, self._local_aligner)
@@ -499,7 +499,7 @@ class ChainMixin(StructureState):
         Returns:
             This structure.
         """
-        chain_id = self._require_chain(chain_id)
+        chain_id = self._chain_key(chain_id)
         new_chain = copy.deepcopy(chain)
         new_chain.id = chain_id
         self.model.detach_child(chain_id)
@@ -573,7 +573,7 @@ class ChainMixin(StructureState):
         Raises:
             ValueError: If renaming would create duplicate chain IDs.
         """
-        resolved = {self._require_chain(old): str(new) for old, new in mapping.items()}
+        resolved = {self._chain_key(old): str(new) for old, new in mapping.items()}
         final_ids = [resolved.get(key, key) for key in self.chains]
         if len(set(final_ids)) != len(final_ids):
             raise ValueError("Renaming would create duplicate chain IDs.")
@@ -688,7 +688,7 @@ class ChainMixin(StructureState):
                 return True
         return False
 
-    def chain_contact_partners(self, cutoff: float = CONTACTS_CUTOFF_NM,
+    def chain_partner_map(self, cutoff: float = CONTACTS_CUTOFF_NM,
                                moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> dict[str, list[str]]:
         """Find which chains touch, from inter-chain contact-point distances.
 
@@ -712,7 +712,7 @@ class ChainMixin(StructureState):
 
 ###################################### SUMMARY
 
-    def chain_summary(self, partners: bool = False, cutoff: float = CONTACTS_CUTOFF_NM,
+    def chain_table(self, partners: bool = False, cutoff: float = CONTACTS_CUTOFF_NM,
                       moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> pd.DataFrame:
         """Summarize every chain: IDs, entity, polymer moiety, description, references, and mapping coverage.
 
@@ -727,7 +727,7 @@ class ChainMixin(StructureState):
         Returns:
             One row per chain.
         """
-        contacts = self.chain_contact_partners(cutoff=cutoff, moieties=moieties) if partners else None
+        contacts = self.chain_partner_map(cutoff=cutoff, moieties=moieties) if partners else None
         descriptions = self._entity_descriptions()
         rows = []
         for key, data in self.chains.items():
@@ -739,8 +739,8 @@ class ChainMixin(StructureState):
                 "entity_id": data.entity_id,
                 "moiety": "+".join(moiety for moiety in POLYMER_MOIETIES if moiety in present) or MOIETY_OTHER,
                 "description": descriptions.get(data.entity_id or ""),
-                "external_ref": self.get_external_ref(key),
-                "refseq_id": self.get_refseq_id(key),
+                "external_ref": self.get_accession(key),
+                "refseq_id": self.get_reference_id(key),
                 "sequence_length": length,
                 "reference_length": data.reference_length,
                 "mapped_residues": data.mapped_residues,

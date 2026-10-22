@@ -98,7 +98,7 @@ def _attached_colorbar(ax: Axes, mappable: ScalarMappable, label: str, font_size
     return colorbar
 
 
-def _marker_points(map_size_in: float, n_cols: int, n_rows: int, min_marker_pt: float) -> float:
+def _marker_pt(map_size_in: float, n_cols: int, n_rows: int, min_marker_pt: float) -> float:
     """Return the marker side so that one residue fills its cell, but at least min_marker_pt wide.
 
     Args:
@@ -294,7 +294,7 @@ def _draw_multi_boundaries(ax: Axes, offsets: np.ndarray, sizes: Sequence[int], 
 class ContactPlotMixin(StructureState):
     """Contact maps and multi-chain block maps."""
 
-    def _residue_bfactor_as_plddt(self, chain_key: str) -> np.ndarray:
+    def _plddt_values(self, chain_key: str) -> np.ndarray:
         """Return per-residue pLDDT of a chain from the C-alpha B-factor, or the atom mean without C-alpha.
 
         AlphaFold models store pLDDT in the B-factor column; for experimental structures these are B-factors.
@@ -341,7 +341,7 @@ class ContactPlotMixin(StructureState):
                  else f"{self._quoted_auth_id(chain_a)}–{self._quoted_auth_id(chain_b)}")
         return f"{names} contacts (≤ {cutoff:g} nm)"
 
-    def _tick_labels(self, chain_key: str, start: int, stop: int, tick_step: int,
+    def _chain_ticks(self, chain_key: str, start: int, stop: int, tick_step: int,
                      n_ticks: int | None = None) -> tuple[np.ndarray, list[str]]:
         """Return tick positions and residue-number labels for positions start..stop-1 of one axis.
 
@@ -397,7 +397,7 @@ class ContactPlotMixin(StructureState):
         ax.set_ylabel(ylabel, fontsize=font_size)
 
     @staticmethod
-    def _paint(ax: Axes, matrix: np.ndarray, gray_matrix: np.ndarray | None, value: str, style: str,
+    def _draw_matrix(ax: Axes, matrix: np.ndarray, gray_matrix: np.ndarray | None, value: str, style: str,
                background: ColorType, color: ColorType, cmap: str, cutoff: float, gray_cutoff: float | None,
                marker_pt: float) -> ScalarMappable | None:
         """Draw a pair matrix on ax over an optional grayscale background.
@@ -489,8 +489,8 @@ class ContactPlotMixin(StructureState):
             col_start, col_stop = _crop_window(close.any(axis=0), n_cols, CONTACT_CROP_PAD)
         n_visible_rows, n_visible_cols = row_stop - row_start, col_stop - col_start
         ax.set_facecolor(background)
-        marker_pt = _marker_points(map_size_in, n_visible_cols, n_visible_rows, min_marker_pt)
-        mappable = self._paint(ax, matrix, gray_matrix, value, style, background, color, cmap,
+        marker_pt = _marker_pt(map_size_in, n_visible_cols, n_visible_rows, min_marker_pt)
+        mappable = self._draw_matrix(ax, matrix, gray_matrix, value, style, background, color, cmap,
                                cutoff, gray_cutoff, marker_pt)
         # imshow resets limits and aspect, so both are applied after painting
         ax.set_xlim(col_start - 0.5, col_stop - 0.5)
@@ -498,8 +498,8 @@ class ContactPlotMixin(StructureState):
         ax.set_aspect(_resolve_aspect(aspect, n_visible_rows, n_visible_cols), adjustable="box")
         if mappable is not None and value == "distance":
             _attached_colorbar(ax, mappable, "min distance (nm)", font_size)
-        x_ticks, x_tick_labels = self._tick_labels(chain_b, col_start, col_stop, tick_step, n_ticks)
-        y_ticks, y_tick_labels = self._tick_labels(chain_a, row_start, row_stop, tick_step, n_ticks)
+        x_ticks, x_tick_labels = self._chain_ticks(chain_b, col_start, col_stop, tick_step, n_ticks)
+        y_ticks, y_tick_labels = self._chain_ticks(chain_a, row_start, row_stop, tick_step, n_ticks)
         self._style_axes(ax, x_ticks, x_tick_labels, y_ticks, y_tick_labels, show_ticks=show_ticks, tick_size=tick_size,
                          tick_rotation=tick_rotation, xlabel=xlabel or self._quoted_auth_id(chain_b),
                          ylabel=ylabel or self._quoted_auth_id(chain_a), font_size=font_size)
@@ -671,7 +671,7 @@ class ContactPlotMixin(StructureState):
         Raises:
             ValueError: If fewer than two different chains or too few pair colors are given.
         """
-        keys = [self._require_chain(c) for c in chain_ids]
+        keys = [self._chain_key(c) for c in chain_ids]
         if len(keys) < 2 or len(set(keys)) != len(keys):
             raise ValueError("plot_multi_contact_map needs two or more different chains.")
         pairs = list(itertools.combinations(range(len(keys)), 2))
@@ -698,7 +698,7 @@ class ContactPlotMixin(StructureState):
         ax.set_ylim(n_total - 0.5, -margin)
         ax.set_aspect("equal", adjustable="box")
 
-        marker_area = _marker_points(size_in, n_total, n_total, min_marker_pt) ** 2
+        marker_area = _marker_pt(size_in, n_total, n_total, min_marker_pt) ** 2
         rows, cols = np.nonzero(gray_mask)
         background_scatter = ax.scatter(cols, rows, c=matrix[rows, cols], cmap=CONTACT_GRAY_CMAP,
                                         vmin=0, vmax=gray_cutoff, s=marker_area, marker="s", linewidths=0, zorder=1)
@@ -740,7 +740,7 @@ class ContactPlotMixin(StructureState):
             n_total: Number of residues along each axis.
             marker_area: Marker area in square points.
         """
-        colors = plddt_colors(np.concatenate([self._residue_bfactor_as_plddt(k) for k in keys]))
+        colors = plddt_colors(np.concatenate([self._plddt_values(k) for k in keys]))
         index = np.arange(n_total)
         track = np.full(n_total, -MULTI_TRACK_OFFSET)
         for x, y in ((index, track), (track, index)):
@@ -778,7 +778,7 @@ class ContactPlotMixin(StructureState):
         ticks: list[int] = []
         tick_labels: list[str] = []
         for key, offset, n in zip(keys, offsets, sizes):
-            positions, chain_labels = self._tick_labels(key, 0, n, tick_step, n_ticks)
+            positions, chain_labels = self._chain_ticks(key, 0, n, tick_step, n_ticks)
             for position, label in zip(positions + offset, chain_labels):
                 min_gap = (half_width(tick_labels[-1]) + half_width(label) + MULTI_TICK_SPACING_EM * em_positions
                            if ticks else 0)

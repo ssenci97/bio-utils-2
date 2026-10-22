@@ -28,7 +28,7 @@ def clean_sequence(sequence: Any) -> str:
     return "".join(char if char.isalpha() else "X" for char in sequence)
 
 
-def cif_sequence(sequence: Any) -> str:
+def clean_cif_sequence(sequence: Any) -> str:
     """Return a cleaned mmCIF sequence with parenthesized modified residues replaced by X.
 
     Args:
@@ -40,7 +40,7 @@ def cif_sequence(sequence: Any) -> str:
     return clean_sequence(re.sub(r"\([^)]*\)", "X", str(sequence)))
 
 
-def residue_to_letter(residue: Residue, moiety: str) -> str:
+def one_letter_code(residue: Residue, moiety: str) -> str:
     """Return the one-letter code of a protein or nucleic residue.
 
     Args:
@@ -72,7 +72,7 @@ def to_list(value: str | Iterable[Any] | None) -> list[str]:
     return [str(item) for item in value]
 
 
-def clean_val(value: str | None) -> str | None:
+def clean_cif_value(value: str | None) -> str | None:
     """Return None for mmCIF missing-value markers ('?' or '.'), otherwise the value unchanged.
 
     Args:

@@ -22,21 +22,21 @@ def test_chains_and_moieties(sync):
     assert sync.chain_ids == ["B", "C", "A"]
     assert sync.get_sequence("B") == "AGCGTGGGCGT"
     assert set(sync.moiety_table["moiety"]) == {"protein", "nucleic", "other"}
-    assert sync.chains_by_moiety("nucleic") == ["A", "B"]
-    summary = sync.chain_summary()
+    assert sync.chain_ids_by_moiety("nucleic") == ["A", "B"]
+    summary = sync.chain_table()
     assert summary["mapping_fraction"].eq(1.0).all()
     assert dict(zip(summary["chain_id"], summary["moiety"])) == {"B": "nucleic", "C": "protein", "A": "nucleic"}
     polymer = sync.moiety_table.query("moiety != 'other'").groupby("chain_id")["moiety"].agg("+".join)
     assert dict(zip(summary["chain_id"], summary["moiety"])) == polymer.to_dict()
     assert "partners" not in summary
-    with_partners = sync.chain_summary(partners=True)
+    with_partners = sync.chain_table(partners=True)
     assert dict(zip(with_partners["auth_chain_id"], with_partners["partners"])) == {"A": "B;C", "B": "A", "C": "A"}
-    assert sync.get_external_ref("B") == "1AAY"
+    assert sync.get_accession("B") == "1AAY"
 
 
 def test_indices_are_one_based_and_consistent(sync):
     residues = sync.residue_table
-    contacts = sync.compute_contacts(contact_type="all")
+    contacts = sync.contact_table(contact_type="all")
     assert residues["sequence_index"].min() == 1
     protein = residues[residues["chain_id"] == "C"]
     assert protein["reference_index"].iloc[0] == 3
@@ -45,14 +45,14 @@ def test_indices_are_one_based_and_consistent(sync):
 
 
 def test_contacts_and_strings(sync, tmp_path):
-    contacts = sync.compute_contacts(contact_type="inter", moieties=("protein", "nucleic", "other"))
+    contacts = sync.contact_table(contact_type="inter", moieties=("protein", "nucleic", "other"))
     assert {"protein", "nucleic"} <= set(contacts["moiety_1"]) | set(contacts["moiety_2"])
     assert contacts.loc[contacts["moiety_2"] == "other", "sequence_index_2"].isna().all()
     assert "1" in sync.contact_string("B")
     path = sync.export_contact_strings(tmp_path / "out" / "strings.tsv", reference=True)
     assert path.is_file()
     assert "\t" in path.read_text().splitlines()[0]
-    assert sync.chain_contact_partners() == {"A": ["B", "C"], "B": ["A"], "C": ["A"]}
+    assert sync.chain_partner_map() == {"A": ["B", "C"], "B": ["A"], "C": ["A"]}
 
 
 def test_matrices_and_statistics(sync):
@@ -60,7 +60,7 @@ def test_matrices_and_statistics(sync):
     assert pair["matrix"].shape == (85, 11)
     block = sync.block_contact_matrix("A", "B")
     assert block["inter"].any()
-    stats = sync.contact_statistics()
+    stats = sync.contact_stat_tables()
     assert {"pairs", "profile", "separation", "moiety_pairs"} == set(stats)
     assert "nucleic/protein" in set(stats["moiety_pairs"]["moiety_pair"])
 
@@ -69,7 +69,7 @@ def test_interfaces(sync):
     complex_row = sync.interface_complex("A", "B")
     assert complex_row["dASA_A2"] > 0
     assert len(sync.chain_partner_table("A")) == 2
-    residues = sync.interface_residues("A", "B")
+    residues = sync.interface_residue_table("A", "B")
     assert (residues["energy_per_partner"].abs() <= residues["contact_energy"].abs()).all()
 
 
@@ -109,7 +109,7 @@ def test_plots_and_exports(sync, tmp_path):
     pdf = export_panels_pdf([([lambda ax: sync.plot_contact_map("A", ax=ax)] * 2, "page")], tmp_path)
     assert pdf.is_file()
     assert build_panel_grid([lambda ax: ax.plot([0, 1])]).axes
-    for export in (sync.export_chain_summary, sync.export_residue_table, sync.export_moiety_table, sync.export_reference_alignment_stats):
+    for export in (sync.export_chain_table, sync.export_residue_table, sync.export_moiety_table, sync.export_alignment_table):
         path = export(outdir=tmp_path)
         assert path.parent == tmp_path and path.suffix == ".tsv"
         assert "\t" in path.read_text().splitlines()[0]

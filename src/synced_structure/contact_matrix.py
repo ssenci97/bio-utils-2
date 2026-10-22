@@ -31,12 +31,12 @@ class ContactMatrixMixin(StructureState):
         Returns:
             (key_a, key_b, label_a, label_b).
         """
-        key_a = self._require_chain(chain_a)
-        key_b = key_a if chain_b is None else self._require_chain(chain_b)
+        key_a = self._chain_key(chain_a)
+        key_b = key_a if chain_b is None else self._chain_key(chain_b)
         return key_a, key_b, self.chains[key_a].chain_id, self.chains[key_b].chain_id
 
     @staticmethod
-    def _pair_rows(contacts: pd.DataFrame, label_a: str, label_b: str) -> pd.DataFrame:
+    def _pair_contacts(contacts: pd.DataFrame, label_a: str, label_b: str) -> pd.DataFrame:
         """Select the contact rows that join two chains, in either order.
 
         Args:
@@ -52,7 +52,7 @@ class ContactMatrixMixin(StructureState):
         return contacts[forward | backward]
 
     @staticmethod
-    def _multi_block_entries(contacts: pd.DataFrame, labels: Sequence[str],
+    def _block_entries(contacts: pd.DataFrame, labels: Sequence[str],
                              offsets: Sequence[int] | np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Place polymer contacts among the labeled chains in a block matrix; hetero contacts are dropped.
 
@@ -89,11 +89,11 @@ class ContactMatrixMixin(StructureState):
         labels = [self.chains[k].chain_id for k in keys]
         sizes = [self.chains[k].sequence_length for k in keys]
         offsets = np.cumsum([0] + sizes[:-1]).astype(int)
-        contacts = self.compute_contacts(cutoff=cutoff, contact_type="all", chain_ids=list(dict.fromkeys(keys)),
+        contacts = self.contact_table(cutoff=cutoff, contact_type="all", chain_ids=list(dict.fromkeys(keys)),
                                          scheme=scheme, moieties=moieties)
         matrix = np.full((sum(sizes), sum(sizes)), np.nan)
         if not contacts.empty:
-            gi, gj, distance = self._multi_block_entries(contacts, labels, offsets)
+            gi, gj, distance = self._block_entries(contacts, labels, offsets)
             matrix[gi, gj] = distance
             matrix[gj, gi] = distance
         return {"matrix": matrix, "sizes": sizes, "offsets": offsets, "labels": labels, "keys": list(keys),
@@ -103,7 +103,7 @@ class ContactMatrixMixin(StructureState):
         """Build the chain_a x chain_b minimum-distance matrix, symmetric if intra-chain.
 
         Args:
-            contacts: Contacts table from compute_contacts, covering both chains.
+            contacts: Contacts table from contact_table, covering both chains.
             chain_a: Chain key on the rows.
             chain_b: Chain key on the columns.
 
@@ -112,7 +112,7 @@ class ContactMatrixMixin(StructureState):
         """
         label_a, label_b = self.chains[chain_a].chain_id, self.chains[chain_b].chain_id
         matrix = np.full((self.chains[chain_a].sequence_length, self.chains[chain_b].sequence_length), np.nan)
-        rows = self._pair_rows(contacts, label_a, label_b).dropna(subset=INDEX_COLUMNS)
+        rows = self._pair_contacts(contacts, label_a, label_b).dropna(subset=INDEX_COLUMNS)
         forward = (rows["chain_1"] == label_a).to_numpy()
         first = rows["sequence_index_1"].to_numpy(dtype=int) - 1
         second = rows["sequence_index_2"].to_numpy(dtype=int) - 1
@@ -138,7 +138,7 @@ class ContactMatrixMixin(StructureState):
             Dict with 'matrix' (nm, NaN where not in contact), 'labels' (standard IDs), 'keys', and 'contacts'.
         """
         key_a, key_b, label_a, label_b = self._resolve_pair(chain_a, chain_b)
-        contacts = self.compute_contacts(cutoff=cutoff, contact_type="all", chain_ids=sorted({key_a, key_b}),
+        contacts = self.contact_table(cutoff=cutoff, contact_type="all", chain_ids=sorted({key_a, key_b}),
                                          scheme=scheme, moieties=moieties)
         return {"matrix": self._matrix_from_contacts(contacts, key_a, key_b), "labels": (label_a, label_b),
                 "keys": (key_a, key_b), "contacts": contacts}

@@ -19,7 +19,7 @@ from .constants import (
     CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, DEFAULT_CONTACT_TYPE, EXPORT_SEP, MD_SCHEMES, MOIETIES,
     MOIETY_NUCLEIC, MOIETY_PROTEIN, NUCLEIC_PHOSPHATE_ATOMS,
 )
-from .residues import is_heavy, representative_coord
+from .residues import is_heavy_atom, contact_point_coord
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,7 +47,7 @@ def _sidechain_atoms(residue: Residue, moiety: str) -> list[Atom]:
         backbone = lambda name: name in NUCLEIC_PHOSPHATE_ATOMS or "'" in name or "*" in name
     else:
         return []
-    return [atom for atom in residue.get_atoms() if not backbone(atom.get_id().strip()) and is_heavy(atom)]
+    return [atom for atom in residue.get_atoms() if not backbone(atom.get_id().strip()) and is_heavy_atom(atom)]
 
 
 def _check_contact_args(cutoff: float, contact_type: str, scheme: str, moieties: Moieties) -> None:
@@ -115,7 +115,7 @@ class ContactMixin(StructureState):
             for index, residue, moiety in residues:
                 if moiety not in moieties:
                     continue
-                point = representative_coord(residue, moiety)
+                point = contact_point_coord(residue, moiety)
                 if point is not None:
                     records.append({"key": key, "chain_id": data.chain_id, "auth_chain_id": data.auth_chain_id,
                                     "sequence_index": index, "resnum": int(residue.id[1]),
@@ -176,12 +176,12 @@ class ContactMixin(StructureState):
             The trajectory.
         """
         if chain_ids is not None:
-            chain_ids = [self._require_chain(chain_id) for chain_id in chain_ids]
+            chain_ids = [self._chain_key(chain_id) for chain_id in chain_ids]
         return self._make_trajectory(self._contact_records(chain_ids, moieties), "ca")
 
 ###################################### CONTACTS
 
-    def compute_contacts(self, cutoff: float = CONTACTS_CUTOFF_NM, contact_type: str = DEFAULT_CONTACT_TYPE,
+    def contact_table(self, cutoff: float = CONTACTS_CUTOFF_NM, contact_type: str = DEFAULT_CONTACT_TYPE,
                          chain_ids: ChainRefs | None = None, scheme: str = "ca",
                          moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> pd.DataFrame:
         """Find residue pairs closer than the cutoff.
@@ -199,7 +199,7 @@ class ContactMixin(StructureState):
         """
         _check_contact_args(cutoff, contact_type, scheme, moieties)
         if chain_ids is not None:
-            chain_ids = [self._require_chain(chain_id) for chain_id in chain_ids]
+            chain_ids = [self._chain_key(chain_id) for chain_id in chain_ids]
         records = self._contact_records(chain_ids, tuple(moieties))
         trajectory = self._make_trajectory(records, scheme)
         keys = np.array([record["key"] for record in records])
@@ -234,7 +234,7 @@ class ContactMixin(StructureState):
 
 ###################################### CONTACT STRINGS
 
-    def _string_indices(self, chain_id: str, moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> list[int]:
+    def _moiety_indices(self, chain_id: str, moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> list[int]:
         """List the polymer residues of a chain whose moiety is in moieties.
 
         Args:
@@ -263,7 +263,7 @@ class ContactMixin(StructureState):
         """
         label = self.chains[chain_id].chain_id
         if contacts is None:
-            contacts = self.compute_contacts(cutoff=cutoff, contact_type=contact_type, scheme=scheme, moieties=moieties)
+            contacts = self.contact_table(cutoff=cutoff, contact_type=contact_type, scheme=scheme, moieties=moieties)
         bits = ["X"] * self.chains[chain_id].sequence_length
         for record in self._contact_records([chain_id], moieties):
             if record["sequence_index"] is not None:
@@ -292,9 +292,9 @@ class ContactMixin(StructureState):
         Returns:
             The contact string along the observed sequence.
         """
-        chain_id = self._require_chain(chain_id)
+        chain_id = self._chain_key(chain_id)
         bits = self._contact_bits(chain_id, cutoff, contact_type, contacts, scheme, moieties)
-        return "".join(bits[index] for index in self._string_indices(chain_id, moieties))
+        return "".join(bits[index] for index in self._moiety_indices(chain_id, moieties))
 
     def reference_contact_string(self, chain_id: str, cutoff: float = CONTACTS_CUTOFF_NM,
                                  contact_type: str = DEFAULT_CONTACT_TYPE, contacts: pd.DataFrame | None = None,
@@ -318,13 +318,13 @@ class ContactMixin(StructureState):
         Raises:
             ValueError: If the chain has no reference sequence.
         """
-        chain_id = self._require_chain(chain_id)
+        chain_id = self._chain_key(chain_id)
         data = self.chains[chain_id]
         reference = data.reference_sequence
         if not reference:
             raise ValueError(f"Chain {data.chain_id} has no reference sequence. Set one with set_reference_sequence() first.")
         observed = self._contact_bits(chain_id, cutoff, contact_type, contacts, scheme, moieties)
-        kept = set(self._string_indices(chain_id, moieties))
+        kept = set(self._moiety_indices(chain_id, moieties))
         bits = ["X"] * len(reference)
         for seq_index, ref_index in data.sequence_index_to_ref_index.items():
             if seq_index in kept and 0 <= ref_index < len(bits):
@@ -347,7 +347,7 @@ class ContactMixin(StructureState):
         Returns:
             The written path.
         """
-        contacts = self.compute_contacts(cutoff=cutoff, contact_type=contact_type, scheme=scheme, moieties=moieties)
+        contacts = self.contact_table(cutoff=cutoff, contact_type=contact_type, scheme=scheme, moieties=moieties)
         options: dict[str, Any] = {"cutoff": cutoff, "contact_type": contact_type, "contacts": contacts,
                                    "scheme": scheme, "moieties": moieties}
         rows = []
@@ -358,7 +358,7 @@ class ContactMixin(StructureState):
                 sequence = data.reference_sequence
                 text = self.reference_contact_string(chain_key, **options)
             else:
-                sequence = "".join(data.sequence[index] for index in self._string_indices(chain_key, moieties))
+                sequence = "".join(data.sequence[index] for index in self._moiety_indices(chain_key, moieties))
                 text = self.contact_string(chain_key, **options)
             rows.append({
                 "structure_id": self.structure_id,

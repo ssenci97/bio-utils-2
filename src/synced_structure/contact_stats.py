@@ -56,7 +56,7 @@ def _contact_sides(contacts: pd.DataFrame) -> Iterator[tuple[str, ResidueToken, 
 class ContactStatsMixin(StructureState):
     """Contact statistics per chain pair, per contact-point residue, per sequence separation, and per moiety pair."""
 
-    def _pair_statistics(self, contacts: pd.DataFrame, moieties: Moieties) -> pd.DataFrame:
+    def _pair_table(self, contacts: pd.DataFrame, moieties: Moieties) -> pd.DataFrame:
         """Summarize contacts per chain pair (or per chain, for intra-chain contacts).
 
         Coverage uses the number of contact-point residues in each chain, so moieties left out do not dilute it.
@@ -75,7 +75,7 @@ class ContactStatsMixin(StructureState):
         rows = []
         for label_a, label_b in pairs:
             same = label_a == label_b
-            pair_rows = self._pair_rows(contacts, label_a, label_b)
+            pair_rows = self._pair_contacts(contacts, label_a, label_b)
             contacted_by_chain: dict[str, set[ResidueToken]] = {}
             for label, residue, _ in _contact_sides(pair_rows):
                 contacted_by_chain.setdefault(label, set()).add(residue)
@@ -99,7 +99,7 @@ class ContactStatsMixin(StructureState):
             })
         return pd.DataFrame(rows, columns=PAIR_STAT_COLUMNS)
 
-    def _residue_profile(self, contacts: pd.DataFrame, moieties: Moieties,
+    def _residue_profile_table(self, contacts: pd.DataFrame, moieties: Moieties,
                          chain_keys: ChainRefs | None = None) -> pd.DataFrame:
         """Count contacts and the nearest partner distance of every contact-point residue.
 
@@ -135,7 +135,7 @@ class ContactStatsMixin(StructureState):
         return pd.DataFrame(rows, columns=PROFILE_COLUMNS).astype({"sequence_index": "Int64"})
 
     @staticmethod
-    def _separation_frame(contacts: pd.DataFrame) -> pd.DataFrame:
+    def _separation_table(contacts: pd.DataFrame) -> pd.DataFrame:
         """Tabulate intra-chain polymer contacts with their sequence separation.
 
         Args:
@@ -152,7 +152,7 @@ class ContactStatsMixin(StructureState):
         }, columns=SEPARATION_COLUMNS)
 
     @staticmethod
-    def _moiety_pair_frame(contacts: pd.DataFrame) -> pd.DataFrame:
+    def _moiety_pair_table(contacts: pd.DataFrame) -> pd.DataFrame:
         """Group contacts by moiety pair, such as protein/nucleic.
 
         Args:
@@ -175,9 +175,9 @@ class ContactStatsMixin(StructureState):
         out[["median_nm", "mean_nm"]] = out[["median_nm", "mean_nm"]].round(4)
         return out[MOIETY_PAIR_COLUMNS]
 
-    def _statistics_from_contacts(self, contacts: pd.DataFrame, moieties: Moieties,
+    def _stat_tables_from_contacts(self, contacts: pd.DataFrame, moieties: Moieties,
                                   chain_keys: ChainRefs | None = None) -> dict[str, pd.DataFrame]:
-        """Compute the contact_statistics tables from precomputed contacts.
+        """Compute the contact_stat_tables tables from precomputed contacts.
 
         Args:
             contacts: Contacts table.
@@ -185,16 +185,16 @@ class ContactStatsMixin(StructureState):
             chain_keys: Chain keys to profile, or None for all.
 
         Returns:
-            The same dict as contact_statistics.
+            The same dict as contact_stat_tables.
         """
         return {
-            "pairs": self._pair_statistics(contacts, moieties),
-            "profile": self._residue_profile(contacts, moieties, chain_keys),
-            "separation": self._separation_frame(contacts),
-            "moiety_pairs": self._moiety_pair_frame(contacts),
+            "pairs": self._pair_table(contacts, moieties),
+            "profile": self._residue_profile_table(contacts, moieties, chain_keys),
+            "separation": self._separation_table(contacts),
+            "moiety_pairs": self._moiety_pair_table(contacts),
         }
 
-    def contact_statistics(self, cutoff: float = CONTACTS_CUTOFF_NM, moieties: Moieties = DEFAULT_CONTACT_MOIETIES,
+    def contact_stat_tables(self, cutoff: float = CONTACTS_CUTOFF_NM, moieties: Moieties = DEFAULT_CONTACT_MOIETIES,
                            scheme: str = "ca") -> dict[str, pd.DataFrame]:
         """Compute contact statistics over all chains.
 
@@ -208,5 +208,5 @@ class ContactStatsMixin(StructureState):
             contact-point residue count and nearest distance), 'separation' (intra-chain contacts with sequence
             separation), and 'moiety_pairs' (counts and distances per moiety pair).
         """
-        contacts = self.compute_contacts(cutoff=cutoff, contact_type="all", scheme=scheme, moieties=moieties)
-        return self._statistics_from_contacts(contacts, moieties)
+        contacts = self.contact_table(cutoff=cutoff, contact_type="all", scheme=scheme, moieties=moieties)
+        return self._stat_tables_from_contacts(contacts, moieties)

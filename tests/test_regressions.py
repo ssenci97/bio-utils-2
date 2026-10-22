@@ -77,7 +77,7 @@ def test_energy_per_partner_is_nan_when_contact_cutoff_exceeds_score_cutoff(tmp_
     loaded = SyncedStructure.from_path(CIF, config_path=config)
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)
-        residues = loaded.interface_residues("A", "B")
+        residues = loaded.interface_residue_table("A", "B")
     no_score = residues["energy_per_partner"].isna()
     assert no_score.any()
     assert (residues.loc[no_score, "n_partners"] > 0).all()

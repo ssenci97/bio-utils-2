@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 class ExportMixin(StructureState):
     """Write tables and figures to the output directory."""
 
-    def _outdir(self, outdir: PathLike | None = None) -> Path:
+    def _resolve_outdir(self, outdir: PathLike | None = None) -> Path:
         """Resolve the output directory, creating it if missing.
 
         Args:
@@ -68,7 +68,7 @@ class ExportMixin(StructureState):
         Returns:
             The written path.
         """
-        path = self._outdir(outdir) / f"{self.structure_id}_{name}{EXPORT_SUFFIX}"
+        path = self._resolve_outdir(outdir) / f"{self.structure_id}_{name}{EXPORT_SUFFIX}"
         frame.to_csv(path, sep=EXPORT_SEP, index=False)
         return path
 
@@ -87,7 +87,7 @@ class ExportMixin(StructureState):
         Returns:
             The written paths.
         """
-        base = self._outdir(outdir) / stem
+        base = self._resolve_outdir(outdir) / stem
         paths = []
         for fmt in formats:
             path = base.with_name(f"{base.name}.{fmt}")
@@ -102,7 +102,7 @@ class ExportMixin(StructureState):
 
 ###################################### CHAIN AND RESIDUE TABLES
 
-    def export_chain_summary(self, outdir: PathLike | None = None) -> Path:
+    def export_chain_table(self, outdir: PathLike | None = None) -> Path:
         """Export one row per chain with entity, description, and polymer residue count.
 
         Args:
@@ -125,7 +125,7 @@ class ExportMixin(StructureState):
         ]
         return self._write_table(pd.DataFrame(rows, columns=CHAIN_COLUMNS), "chains", outdir)
 
-    def export_residue_mapping(self, chain_ids: ChainRefs | None = None, outdir: PathLike | None = None) -> Path:
+    def export_chain_residue_table(self, chain_ids: ChainRefs | None = None, outdir: PathLike | None = None) -> Path:
         """Export the residue-to-reference mapping of the selected chains.
 
         Args:
@@ -135,8 +135,8 @@ class ExportMixin(StructureState):
         Returns:
             The written path, '{structure_id}_residue_mapping.tsv'.
         """
-        selected = self.chain_ids if chain_ids is None else [self._require_chain(c) for c in chain_ids]
-        frames = [self.get_residue_mapping(c) for c in tqdm(selected, desc="mapping", unit="chain", leave=False)]
+        selected = self.chain_ids if chain_ids is None else [self._chain_key(c) for c in chain_ids]
+        frames = [self.chain_residue_table(c) for c in tqdm(selected, desc="mapping", unit="chain", leave=False)]
         frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=MAPPING_COLUMNS)
         return self._write_table(frame, "residue_mapping", outdir)
 
@@ -164,8 +164,8 @@ class ExportMixin(StructureState):
 
 ###################################### ALIGNMENT TABLES
 
-    def export_reference_alignment_stats(self, outdir: PathLike | None = None) -> Path:
-        """Export reference_alignment_stats.
+    def export_alignment_table(self, outdir: PathLike | None = None) -> Path:
+        """Export alignment_table.
 
         Args:
             outdir: Output directory, or None for the configured save_outdir.
@@ -173,10 +173,10 @@ class ExportMixin(StructureState):
         Returns:
             The written path, '{structure_id}_alignment_stats.tsv'.
         """
-        return self._write_table(self.reference_alignment_stats, "alignment_stats", outdir)
+        return self._write_table(self.alignment_table, "alignment_stats", outdir)
 
-    def export_reference_alignment_positions(self, outdir: PathLike | None = None) -> Path:
-        """Export reference_alignment_positions.
+    def export_alignment_column_table(self, outdir: PathLike | None = None) -> Path:
+        """Export alignment_column_table.
 
         Args:
             outdir: Output directory, or None for the configured save_outdir.
@@ -184,35 +184,24 @@ class ExportMixin(StructureState):
         Returns:
             The written path, '{structure_id}_alignment_positions.tsv'.
         """
-        return self._write_table(self.reference_alignment_positions, "alignment_positions", outdir)
+        return self._write_table(self.alignment_column_table, "alignment_positions", outdir)
 
 ###################################### INTERFACE TABLES
 
-    def export_interface_complex(self, chain_pairs: Sequence[ChainPair] | None = None,
-                                 outdir: PathLike | None = None) -> Path:
-        """Export complex-level interface metrics.
+    def export_interface_tables(self, chain_pairs: Sequence[ChainPair] | None = None,
+                                outdir: PathLike | None = None) -> list[Path]:
+        """Export complex-level and residue-level interface metrics.
 
         Args:
             chain_pairs: Chain pairs to export, or None for all pairs.
             outdir: Output directory, or None for the configured save_outdir.
 
         Returns:
-            The written path, '{structure_id}_interface_complex.tsv'.
+            The written paths, '{structure_id}_interface_complex.tsv' and '{structure_id}_interface_residues.tsv'.
         """
-        return self._write_table(self.interface_metrics_all(chain_pairs)["complex"], "interface_complex", outdir)
-
-    def export_interface_residues(self, chain_pairs: Sequence[ChainPair] | None = None,
-                                  outdir: PathLike | None = None) -> Path:
-        """Export residue-level interface metrics.
-
-        Args:
-            chain_pairs: Chain pairs to export, or None for all pairs.
-            outdir: Output directory, or None for the configured save_outdir.
-
-        Returns:
-            The written path, '{structure_id}_interface_residues.tsv'.
-        """
-        return self._write_table(self.interface_metrics_all(chain_pairs)["residues"], "interface_residues", outdir)
+        tables = self.interface_tables(chain_pairs)
+        return [self._write_table(tables["complex"], "interface_complex", outdir),
+                self._write_table(tables["residues"], "interface_residues", outdir)]
 
 ###################################### FIGURES
 
@@ -271,6 +260,6 @@ class ExportMixin(StructureState):
         """
         view = self.show_structure_3d(title=title, **view_kwargs)
         page = VIZ_PAGE_TEMPLATE.replace("__TITLE__", escape(str(title or self.structure_id)))
-        path = self._outdir(outdir) / f"{self.structure_id}_{name}.html"
+        path = self._resolve_outdir(outdir) / f"{self.structure_id}_{name}.html"
         path.write_text(page.replace("__BODY__", view.data), encoding="utf-8")
         return path

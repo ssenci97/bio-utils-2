@@ -40,7 +40,7 @@ if not logger.handlers:
 ###################################### CONFIG AND LOGGING
 
 
-def resolve_config(yaml_path: PathLike | None, defaults: Mapping[str, Any], section: str) -> dict[str, Any]:
+def load_config(yaml_path: PathLike | None, defaults: Mapping[str, Any], section: str) -> dict[str, Any]:
     """Return a section of a YAML config with missing keys filled from defaults; never writes the file.
 
     Args:

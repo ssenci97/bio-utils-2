@@ -23,7 +23,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/ssenci97/bio-utils-2"
-Documentation = "https://github.com/ssenci97/bio-utils-2/tree/main/docs"
+Documentation = "https://ssenci97.github.io/bio-utils-2/"
 Changelog = "https://github.com/ssenci97/bio-utils-2/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]

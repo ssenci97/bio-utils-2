@@ -48,7 +48,7 @@ def _text_node(attribute: str, operator: str, value: Any, negate: bool = False) 
     }
 
 
-def _full_text(val: str) -> Record:
+def _full_text_node(val: str) -> Record:
     """Return a full_text-service terminal node.
 
     Args:
@@ -60,7 +60,7 @@ def _full_text(val: str) -> Record:
     return {"type": "terminal", "service": "full_text", "parameters": {"value": val}}
 
 
-def _group(nodes: list[Record], op: str = "or") -> Record:
+def _group_nodes(nodes: list[Record], op: str = "or") -> Record:
     """Return a single node as is, or wrap several nodes in a logical group.
 
     Args:
@@ -104,15 +104,15 @@ def _criteria_nodes(organisms: Sequence[str] | None, keywords: Sequence[str] | N
     """
     nodes: list[Record] = []
     if organisms:
-        nodes.append(_group([_text_node("rcsb_entity_source_organism.ncbi_scientific_name", "contains_phrase", o) for o in organisms]))
+        nodes.append(_group_nodes([_text_node("rcsb_entity_source_organism.ncbi_scientific_name", "contains_phrase", o) for o in organisms]))
     if keywords:
-        nodes.append(_group([_full_text(k) for k in keywords]))
+        nodes.append(_group_nodes([_full_text_node(k) for k in keywords]))
     if title_contains:
-        nodes.append(_group([_text_node("struct.title", "contains_words", x) for x in title_contains]))
+        nodes.append(_group_nodes([_text_node("struct.title", "contains_words", x) for x in title_contains]))
     if keywords_field:
-        nodes.append(_group([_text_node("struct_keywords.pdbx_keywords", "contains_words", x) for x in keywords_field]))
+        nodes.append(_group_nodes([_text_node("struct_keywords.pdbx_keywords", "contains_words", x) for x in keywords_field]))
     if experimental_method:
-        nodes.append(_group([_text_node("exptl.method", "exact_match", m) for m in experimental_method]))
+        nodes.append(_group_nodes([_text_node("exptl.method", "exact_match", m) for m in experimental_method]))
     if resolution_min is not None or resolution_max is not None:
         nodes.append(_text_node("rcsb_entry_info.resolution_combined", "range", {
             "from": resolution_min if resolution_min is not None else RCSB_RESOLUTION_MIN_DEFAULT,
@@ -131,13 +131,13 @@ def _criteria_nodes(organisms: Sequence[str] | None, keywords: Sequence[str] | N
             "to": polymer_entity_count_max if polymer_entity_count_max is not None else RCSB_COUNT_MAX_DEFAULT,
             "include_lower": True, "include_upper": True}))
     if uniprot_ids:
-        nodes.append(_group([
+        nodes.append(_group_nodes([
             _text_node("rcsb_polymer_entity_container_identifiers.reference_sequence_identifiers.database_accession",
                        "exact_match", u)
             for u in uniprot_ids
         ]))
     if enzyme_classification:
-        nodes.append(_group([_text_node("rcsb_polymer_entity.rcsb_enzyme_class_combined.ec", "exact_match", e)
+        nodes.append(_group_nodes([_text_node("rcsb_polymer_entity.rcsb_enzyme_class_combined.ec", "exact_match", e)
                              for e in enzyme_classification]))
     return nodes
 
@@ -217,7 +217,7 @@ def search_rcsb(
     else:
         opts["paginate"] = {"start": 0, "rows": max_rows}
 
-    payload = {"query": _group(nodes, "and"), "return_type": return_type, "request_options": opts}
+    payload = {"query": _group_nodes(nodes, "and"), "return_type": return_type, "request_options": opts}
     response = requests.post(RCSB_SEARCH_URL, json=payload, timeout=timeout)
     if response.status_code == 204:  # valid query with no hits
         return []

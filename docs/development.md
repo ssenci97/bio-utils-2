@@ -20,7 +20,7 @@ Always use the editable install (`-e`): tests and scripts then import the code i
 - **Mixins:** `SyncedStructure` is assembled from one mixin per area. Every mixin inherits `StructureState` (`base.py`), which declares the shared attributes and, for type checkers only, the methods mixins call on each other. If a mixin starts calling a method of another mixin, add its signature there.
 - **Tables first:** analyses return DataFrames (or dicts of them) with both chain IDs and 1-based indices; figures are drawn from those tables.
 - **Units:** nm for contacts, Å for interface metrics and docking.
-- **Names:** a name says its domain and what it returns (`interface_buried_area`, `docked_model_table`). The [API index](api_index.md) lists them all; renames replace names outright, without deprecated aliases.
+- **Names:** a name says what it returns. A verb prefix is used only when it fixes the return type or a side effect (`set_` → `self`, `export_` → paths, `plot_` → figure); otherwise the name is a noun whose last word is the type (`contact_table`, `chain_partner_map`, `contact_string`). New names must not be longer than needed. The API reference (`docs/index.html`) states the full grammar and lists every name; renames replace names outright, without deprecated aliases.
 
 ## Tests
 
@@ -36,7 +36,7 @@ pytest -m ""           # everything — run this before every commit
 | Smoke and regressions | `tests/test_smoke.py`, `tests/test_regressions.py` | Every analysis on 1AAY, edge cases, bugs that were fixed |
 | Docking | `tests/test_docking.py` | HADDOCK3 set up offline; real low-throughput runs with `-m haddock` |
 | Network | `tests/test_network.py` | Live RCSB download, search and citations |
-| Documentation | `tests/test_docs.py` | Every guide's code runs; every relative link resolves |
+| Documentation | `tests/test_docs.py` | README code runs; links resolve; `docs/index.html` is current and lists every public name |
 | Types and docstrings | `tests/test_typing.py` | See below |
 
 `tests/test_typing.py` is a second layer for the type hints; each check is skipped when its tool is not installed:
@@ -59,9 +59,8 @@ The tools can also be run directly: `ruff check src`, `pydoclint src`, `mypy`. T
 
 ## Documentation
 
-- The README is the landing page; guides go in `docs/guides/`, definitions in `docs/concepts.md`, the reference in `docs/api_index.md`.
-- Code in the guides runs in `tests/test_docs.py`, top to bottom per guide, with `from_rcsb` served from `tests/data`. Mark a block that must not run (a real haddock3 run, a network search) with `<!-- skip-test -->` on the line before it.
-- When you add or rename a public name, update `docs/api_index.md`.
+- `README.md` holds installation and the quick start; its Python code runs in `tests/test_docs.py`, with `from_rcsb` served from `tests/data`. Mark a block that must not run with `<!-- skip-test -->` on the line before it.
+- `docs/index.html` is generated from signatures and docstrings: run `python docs/build_docs.py` after changing any docstring or name, and commit the result. The test fails when the page is stale.
 
 ## Releasing
 

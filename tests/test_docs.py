@@ -1,10 +1,11 @@
-"""The documentation works: every guide's code runs, and every relative link points somewhere real.
+"""The documentation works: the README's code runs, every relative link resolves, and the API page is current.
 
-The README and each guide in docs/guides run like a notebook: their ```python blocks are executed top to bottom
-in one namespace. A block preceded by <!-- skip-test --> is not run (real haddock3 runs, network searches).
-Structures the guides download with from_rcsb are loaded from tests/data instead, so the test is offline.
+The README runs like a notebook: its ```python blocks are executed top to bottom in one namespace. A block
+preceded by <!-- skip-test --> is not run. Structures downloaded with from_rcsb are loaded from tests/data
+instead, so the test is offline. docs/index.html must equal what docs/build_docs.py generates now.
 """
 
+import importlib.util
 import re
 from pathlib import Path
 
@@ -19,8 +20,8 @@ from synced_structure import SyncedStructure  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(__file__).parent / "data"
-GUIDES = [ROOT / "README.md", *sorted((ROOT / "docs" / "guides").glob("*.md"))]
-PAGES = [ROOT / "README.md", ROOT / "CHANGELOG.md", *sorted((ROOT / "docs").rglob("*.md"))]
+GUIDES = [ROOT / "README.md"]
+PAGES = [ROOT / "README.md", ROOT / "CHANGELOG.md", *sorted((ROOT / "docs").glob("*.md"))]
 BLOCK = re.compile(r"(<!-- skip-test -->\s*)?```python\n(.*?)```", re.S)
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
@@ -70,3 +71,31 @@ def test_relative_links_resolve():
             elif anchor and linked.suffix == ".md" and anchor not in _anchors(linked):
                 broken.append(f"{page.relative_to(ROOT)}: {target} (missing anchor)")
     assert not broken, "\n".join(broken)
+
+
+def _build_docs():
+    spec = importlib.util.spec_from_file_location("build_docs", ROOT / "docs" / "build_docs.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_api_page_is_current():
+    page = _build_docs().build_html()
+    assert page == (ROOT / "docs" / "index.html").read_text(encoding="utf-8"), (
+        "docs/index.html is stale: run python docs/build_docs.py")
+
+
+def test_api_page_lists_every_public_name():
+    page = _build_docs().build_html()
+    import synced_structure
+    from synced_structure import HaddockDocking
+
+    missing = [name for name in synced_structure.__all__ if f'id="{name}"' not in page and f'.{name}"' not in page]
+    for cls, owner in ((SyncedStructure, "SyncedStructure"), (HaddockDocking, "HaddockDocking")):
+        for name in dir(cls):
+            member = getattr(cls, name)
+            if not name.startswith("_") and (callable(member) or isinstance(member, property)):
+                if f'id="{owner}.{name}"' not in page:
+                    missing.append(f"{owner}.{name}")
+    assert not missing, missing
