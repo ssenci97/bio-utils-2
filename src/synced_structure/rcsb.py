@@ -2,6 +2,9 @@
 
 ###################################### IMPORTS AND CONSTANTS
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 from typing import Any
 
 import pandas as pd
@@ -11,6 +14,7 @@ from .constants import (
     PUB_COLUMNS, RCSB_COUNT_MAX_DEFAULT, RCSB_GRAPHQL_URL, RCSB_RESOLUTION_MAX_DEFAULT, RCSB_RESOLUTION_MIN_DEFAULT,
     RCSB_RETURN_TYPES, RCSB_SEARCH_URL,
 )
+from ._types import Record
 from .utils import log_info
 
 PUB_QUERY = """query($ids: [String!]!) {
@@ -26,32 +30,79 @@ PUB_QUERY = """query($ids: [String!]!) {
 ###################################### QUERY NODES
 
 
-def _text_node(attribute, operator, value, negate=False):
-    """Return a text-service terminal node."""
+def _text_node(attribute: str, operator: str, value: Any, negate: bool = False) -> Record:
+    """Return a text-service terminal node.
+
+    Args:
+        attribute: RCSB attribute path.
+        operator: Search operator, such as 'exact_match' or 'range'.
+        value: Value or range to match.
+        negate: Whether to negate the match.
+
+    Returns:
+        The query node.
+    """
     return {
         "type": "terminal", "service": "text",
         "parameters": {"attribute": attribute, "operator": operator, "negation": negate, "value": value},
     }
 
 
-def _full_text(val):
-    """Return a full_text-service terminal node."""
+def _full_text(val: str) -> Record:
+    """Return a full_text-service terminal node.
+
+    Args:
+        val: Free-text term.
+
+    Returns:
+        The query node.
+    """
     return {"type": "terminal", "service": "full_text", "parameters": {"value": val}}
 
 
-def _group(nodes, op="or"):
-    """Return a single node as is, or wrap several nodes in a logical group."""
+def _group(nodes: list[Record], op: str = "or") -> Record:
+    """Return a single node as is, or wrap several nodes in a logical group.
+
+    Args:
+        nodes: Query nodes.
+        op: Logical operator joining them, 'or' or 'and'.
+
+    Returns:
+        The node or group.
+    """
     return nodes[0] if len(nodes) == 1 else {"type": "group", "logical_operator": op, "nodes": nodes}
 
 
 ###################################### SEARCH
 
 
-def _criteria_nodes(organisms, keywords, title_contains, keywords_field, experimental_method, resolution_max,
-                    resolution_min, release_date_from, release_date_to, polymer_entity_count_min,
-                    polymer_entity_count_max, uniprot_ids, enzyme_classification):
-    """Return one query node per criterion that is set; values within a criterion are OR-ed by the caller's grouping."""
-    nodes = []
+def _criteria_nodes(organisms: Sequence[str] | None, keywords: Sequence[str] | None,
+                    title_contains: Sequence[str] | None, keywords_field: Sequence[str] | None,
+                    experimental_method: Sequence[str] | None, resolution_max: float | None,
+                    resolution_min: float | None, release_date_from: str | None, release_date_to: str | None,
+                    polymer_entity_count_min: int | None, polymer_entity_count_max: int | None,
+                    uniprot_ids: Sequence[str] | None, enzyme_classification: Sequence[str] | None) -> list[Record]:
+    """Return one query node per criterion that is set; values within a criterion are OR-ed.
+
+    Args:
+        organisms: Scientific names of source organisms.
+        keywords: Free-text terms.
+        title_contains: Words in the entry title.
+        keywords_field: Words in the entry keywords.
+        experimental_method: Experimental methods.
+        resolution_max: Upper resolution limit in Å.
+        resolution_min: Lower resolution limit in Å.
+        release_date_from: Earliest release date (YYYY-MM-DD).
+        release_date_to: Latest release date (YYYY-MM-DD).
+        polymer_entity_count_min: Minimum number of polymer entities.
+        polymer_entity_count_max: Maximum number of polymer entities.
+        uniprot_ids: UniProt accessions.
+        enzyme_classification: EC numbers.
+
+    Returns:
+        The query nodes, one per criterion set.
+    """
+    nodes: list[Record] = []
     if organisms:
         nodes.append(_group([_text_node("rcsb_entity_source_organism.ncbi_scientific_name", "contains_phrase", o) for o in organisms]))
     if keywords:
@@ -68,7 +119,7 @@ def _criteria_nodes(organisms, keywords, title_contains, keywords_field, experim
             "to": resolution_max if resolution_max is not None else RCSB_RESOLUTION_MAX_DEFAULT,
             "include_lower": True, "include_upper": True}))
     if release_date_from or release_date_to:
-        date_range = {"include_lower": True, "include_upper": True}
+        date_range: Record = {"include_lower": True, "include_upper": True}
         if release_date_from:
             date_range["from"] = release_date_from
         if release_date_to:
@@ -140,11 +191,10 @@ def search_rcsb(
         timeout: Request timeout in seconds.
 
     Returns:
-        List of matching identifiers.
+        List of matching identifiers. A non-2xx API response raises requests.HTTPError.
 
     Raises:
         ValueError: If no search criteria are provided or return_type is unknown.
-        requests.HTTPError: On non-2xx API response.
     """
     if return_type not in RCSB_RETURN_TYPES:
         raise ValueError(f"return_type must be one of {RCSB_RETURN_TYPES}, got {return_type!r}")
@@ -178,7 +228,7 @@ def search_rcsb(
 ###################################### PUBLICATIONS
 
 
-def search_rcsb_pubs(
+def fetch_rcsb_citations(
     df: pd.DataFrame,
     id_col: str = "pdb_id",
     primary_only: bool = True,

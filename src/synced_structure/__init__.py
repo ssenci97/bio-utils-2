@@ -1,11 +1,13 @@
-"""Synchronized Biopython structures: chain mapping, contacts, contact maps, interfaces, and 3D views."""
+"""Synchronized Biopython structures: chain mapping, contacts, contact maps, interfaces, 3D views, and HADDOCK3 docking."""
 
+from .docking import HaddockDocking
 from .panels import build_panel_grid, export_panels_pdf
-from .rcsb import search_rcsb, search_rcsb_pubs
+from .rcsb import fetch_rcsb_citations, search_rcsb
 from .structure import SyncedStructure
-from .viz3d import side_by_side
+from .viz3d import show_side_by_side_3d
 
 __version__ = "0.1.0"
 __all__ = [
-    "SyncedStructure", "build_panel_grid", "export_panels_pdf", "search_rcsb", "search_rcsb_pubs", "side_by_side",
+    "HaddockDocking", "SyncedStructure", "build_panel_grid", "export_panels_pdf", "fetch_rcsb_citations", "search_rcsb",
+    "show_side_by_side_3d",
 ]

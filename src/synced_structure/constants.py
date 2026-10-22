@@ -2,6 +2,8 @@
 
 ###################################### IMPORTS AND CONSTANTS
 
+from typing import Any
+
 from Bio.Data.PDBData import nucleic_letters_3to1_extended
 from Bio.PDB.Polypeptide import protein_letters_3to1_extended
 
@@ -112,3 +114,60 @@ COMPLETE_MIN_SEPARATION = 2
 KYTE_DOOLITTLE_HYDROPATHY = {"A": 0.62, "R": -2.53, "N": -0.78, "D": -0.90, "C": 0.29, "Q": -0.85, "E": -0.74, "G": 0.48, "H": -0.40, "I": 1.38, "L": 1.06, "K": -1.50, "M": 0.64, "F": 1.19, "P": 0.12, "S": -0.18, "T": -0.05, "W": 0.81, "Y": 0.26, "V": 1.08}
 # Tien et al. maximum accessible surface area in A^2 per three-letter residue name
 TIEN_MAX_ASA = {"ALA": 129, "ARG": 274, "ASN": 195, "ASP": 193, "CYS": 167, "GLN": 225, "GLU": 223, "GLY": 104, "HIS": 224, "ILE": 197, "LEU": 201, "LYS": 236, "MET": 224, "PHE": 240, "PRO": 159, "SER": 155, "THR": 172, "TRP": 285, "TYR": 263, "VAL": 174}
+
+### HADDOCK3 docking
+HADDOCK_EXECUTABLE = "haddock3"
+HADDOCK_METHODS = ("ab-initio", "oracle", "eval")
+HADDOCK_DEFAULT_SEED = 917
+# one single-character segment ID per docking partner, in partner order
+HADDOCK_SEGIDS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+HADDOCK_NUMBERINGS = ("reference", "sequence", "author")
+HADDOCK_RESTRAINT_KINDS = ("ambiguous", "unambiguous")
+# (distance, lower correction, upper correction) in A: an effective distance of 0-2 A, the HADDOCK AIR default
+HADDOCK_RESTRAINT_DISTANCE = (2.0, 2.0, 0.0)
+HADDOCK_CLEARANCE_A = 10.0
+HADDOCK_PATCH_GAP = 4
+# residue terms per restraint line; CNS truncates long input lines (about 264 characters)
+HADDOCK_TBL_TERMS_PER_LINE = 6
+HADDOCK_MAX_RESID = 9999
+# residue number gap left between chains merged into one segment when they are renumbered
+HADDOCK_CHAIN_GAP = 10
+HADDOCK_PLACEMENT_TRIALS = 200
+HADDOCK_PLACEMENT_GROWTH = 1.25
+# modules that run CNS and take a random seed, and those that read restraint files
+HADDOCK_SEEDED_MODULES = frozenset({"topoaa", "rigidbody", "flexref", "emref", "mdref", "emscoring", "mdscoring"})
+HADDOCK_RESTRAINT_MODULES = frozenset({"rigidbody", "flexref", "emref", "mdref"})
+HADDOCK_PROTECTED_GLOBALS = frozenset({"run_dir", "molecules"})
+HADDOCK_PRESETS: dict[str, list[tuple[str, dict[str, Any]]]] = {
+    "ab-initio": [
+        ("topoaa", {}),
+        ("rigidbody", {"sampling": 10000, "cmrest": True, "ranair": True}),
+        ("seletop", {"select": 200}),
+        ("emref", {"contactairs": True}),
+        ("clustfcc", {}),
+        ("seletopclusts", {"top_clusters": 10}),
+    ],
+    "oracle": [
+        ("topoaa", {}),
+        ("rigidbody", {"sampling": 200}),
+        ("emref", {}),
+        ("seletop", {"select": 10}),
+    ],
+    "eval": [
+        ("topoaa", {}),
+        ("rigidbody", {"sampling": 200}),
+        ("emref", {}),
+        ("seletop", {"select": 10}),
+    ],
+}
+HADDOCK_RESIDUE_MAP_COLUMNS = [
+    "partner", "segid", "haddock_resid", "structure_id", "chain_key", "chain_id", "auth_chain_id",
+    "pdb_resnum", "icode", "resname", "sequence_index", "reference_index",
+]
+HADDOCK_RESTRAINT_COLUMNS = [
+    "kind", "origin", "segid_a", "residues_a", "passive_a", "segid_b", "residues_b", "passive_b", "distance",
+]
+HADDOCK_PATCH_COLUMNS = ["patch", "segid_a", "chain_a", "residues_a", "segid_b", "chain_b", "residues_b", "n_pairs"]
+HADDOCK_ANALYSE_EXECUTABLE = "haddock3-analyse"
+HADDOCK_SCORE_COLUMNS = ["step", "model", "path", "score", "cluster_id", "cluster_rank", "model_cluster_rank",
+                         "origin", "seed"]

@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from synced_structure import SyncedStructure, search_rcsb, search_rcsb_pubs
+from synced_structure import SyncedStructure, search_rcsb, fetch_rcsb_citations
 
 pytestmark = pytest.mark.network
 
@@ -16,14 +16,14 @@ def hemoglobin():
 
 def test_from_rcsb_hemoglobin_chains(hemoglobin):
     assert hemoglobin.chain_ids == ["A", "B", "C", "D"]
-    summary = hemoglobin.summary()
+    summary = hemoglobin.chain_summary()
     descriptions = dict(zip(summary["chain_id"], summary["description"]))
     assert "alpha" in descriptions["A"].lower() and "beta" in descriptions["B"].lower()
     assert summary["mapping_fraction"].eq(1.0).all()
 
 
 def test_hemoglobin_interfaces(hemoglobin):
-    complexes = hemoglobin.interface_all()["complex"].set_index(["chain_a", "chain_b"])
+    complexes = hemoglobin.interface_metrics_all()["complex"].set_index(["chain_a", "chain_b"])
     assert complexes.loc[("A", "B"), "n_contacts"] > 0
     assert complexes.loc[("B", "D"), "n_contacts"] == 0
     assert str(complexes.loc[("B", "D"), "dASA_A2"]) == "0.0"
@@ -35,7 +35,7 @@ def test_search_rcsb_returns_entry_ids():
     assert all(len(hit) == 4 for hit in hits)
 
 
-def test_search_rcsb_pubs_primary_citation():
-    pubs = search_rcsb_pubs(pd.DataFrame({"pdb_id": ["4HHB"]}))
+def test_fetch_rcsb_citations_primary_citation():
+    pubs = fetch_rcsb_citations(pd.DataFrame({"pdb_id": ["4HHB"]}))
     assert len(pubs) == 1
     assert isinstance(pubs.loc[0, "title"], str) and pubs.loc[0, "title"]

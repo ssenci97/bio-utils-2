@@ -6,19 +6,25 @@ with the [PYTHON-INFO] prefix; clear its handlers to silence them.
 
 ###################################### IMPORTS AND CONSTANTS
 
+from __future__ import annotations
+
 import datetime
+import importlib
+import importlib.util
 import logging
 import sys
 import time
-import warnings
+from collections.abc import Mapping
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import yaml
 
-try:
-    import resource
-except ImportError:  # Windows has no resource module
-    resource = None
+from ._types import PathLike
+
+# Windows has no resource module
+resource: ModuleType | None = importlib.import_module("resource") if importlib.util.find_spec("resource") else None
 
 LOGGER_NAME = "synced_structure"
 LOG_PREFIX = "[PYTHON-INFO] "
@@ -34,13 +40,16 @@ if not logger.handlers:
 ###################################### CONFIG AND LOGGING
 
 
-def resolve_config(yaml_path, defaults, section):
+def resolve_config(yaml_path: PathLike | None, defaults: Mapping[str, Any], section: str) -> dict[str, Any]:
     """Return a section of a YAML config with missing keys filled from defaults; never writes the file.
 
     Args:
         yaml_path: Path to the YAML file, or None to use defaults only.
-        defaults: Dict of default values for the section.
+        defaults: Default values for the section.
         section: Top-level YAML key that holds this section.
+
+    Returns:
+        The section's values over the defaults.
     """
     if yaml_path is None:
         return dict(defaults)
@@ -49,36 +58,28 @@ def resolve_config(yaml_path, defaults, section):
     return {**defaults, **(data.get(section) or {})}
 
 
-def deprecated_method(old_name, new_name):
-    """Return a method that warns that old_name is deprecated and forwards the call to new_name.
+def log_info(message: str) -> None:
+    """Log an informational message on the package logger.
 
     Args:
-        old_name: Name of the deprecated method.
-        new_name: Name of the method that replaces it, on the same object.
+        message: Text to log.
     """
-    def method(self, *args, **kwargs):
-        warnings.warn(f"{old_name}() is deprecated; use {new_name}().", DeprecationWarning, stacklevel=2)
-        return getattr(self, new_name)(*args, **kwargs)
-
-    method.__name__ = old_name
-    method.__doc__ = f"Deprecated alias of {new_name}()."
-    return method
-
-
-def log_info(message):
-    """Log an informational message on the package logger."""
     logger.info(message)
 
 
-def _peak_memory_mb():
-    """Return the peak resident memory of this process in MB, or None where the resource module is unavailable."""
+def _peak_memory_mb() -> float | None:
+    """Return the peak resident memory of this process.
+
+    Returns:
+        Peak memory in MB, or None where the resource module is unavailable.
+    """
     if resource is None:
         return None
     usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return usage / 1024**2 if sys.platform == "darwin" else usage / 1024
 
 
-def log_completion(start_time, message):
+def log_completion(start_time: float, message: str) -> None:
     """Log a timestamped line with elapsed time and peak memory.
 
     Args:

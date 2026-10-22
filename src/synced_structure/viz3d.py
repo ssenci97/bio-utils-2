@@ -1,6 +1,9 @@
 """Jupyter 3D views of synchronized structures using 3Dmol.js.
 
-Views are clickable, with a centered title above them, per-chain colors, representation styles, backgrounds, sizes, rotation angles with reset and current readout buttons, and side-by-side layouts."""
+Views are clickable, with a centered title above them, per-chain colors, representation styles, backgrounds, sizes, rotation angles with reset and current readout buttons, and side-by-side layouts.
+"""
+
+from __future__ import annotations
 
 ###################################### IMPORTS AND CONSTANTS
 
@@ -11,13 +14,15 @@ import json
 import math
 import time
 import uuid
+from collections.abc import Sequence
 from html import escape
 
 from Bio.PDB import MMCIFIO
 from IPython.display import HTML
 
+from .base import StructureState
 from .constants import PALETTE
-from .utils import deprecated_method, log_completion, log_info
+from .utils import log_completion, log_info
 
 VIZ_SIZE_PX = 500
 VIZ_PANEL_SIZE_PX = 350
@@ -101,13 +106,42 @@ catch(e){console.error("[JS-INFO] angle read failed",e);out().textContent="unrea
 ###################################### ROTATION
 
 
-def _quaternion(angles):
-    """Return the (x, y, z, w) quaternion of x, y, z rotations in degrees, applied in x, y, z order."""
-    def axis(index, degrees):
-        half = math.radians(degrees) / 2
-        return tuple(math.sin(half) if j == index else 0.0 for j in range(3)) + (math.cos(half),)
+Quaternion = tuple[float, float, float, float]
 
-    def mul(p, q):
+
+def _quaternion(angles: Sequence[float]) -> Quaternion:
+    """Return the (x, y, z, w) quaternion of x, y, z rotations applied in x, y, z order.
+
+    Args:
+        angles: Rotations about x, y and z in degrees.
+
+    Returns:
+        The quaternion as (x, y, z, w).
+    """
+    def axis(index: int, degrees: float) -> Quaternion:
+        """Return the quaternion of one rotation about a coordinate axis.
+
+        Args:
+            index: Axis index, 0 for x, 1 for y, 2 for z.
+            degrees: Rotation in degrees.
+
+        Returns:
+            The quaternion as (x, y, z, w).
+        """
+        half = math.radians(degrees) / 2
+        x, y, z = (math.sin(half) if j == index else 0.0 for j in range(3))
+        return x, y, z, math.cos(half)
+
+    def mul(p: Quaternion, q: Quaternion) -> Quaternion:
+        """Return the Hamilton product p * q.
+
+        Args:
+            p: Left quaternion.
+            q: Right quaternion.
+
+        Returns:
+            The product quaternion.
+        """
         x1, y1, z1, w1 = p
         x2, y2, z2, w2 = q
         return (w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2, w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
@@ -118,15 +152,19 @@ def _quaternion(angles):
 ###################################### COLOR HELPERS
 
 
-class Viz3DMixin:
+class Viz3DMixin(StructureState):
     """Jupyter 3Dmol.js views of the structure."""
 
-    def _chain_colors(self, colors=None, chain_palette=CHAIN_PALETTE):
-        """Return {chain_id: color} for loaded chains, ignoring unloaded chains and filling gaps from the palette.
+    def _chain_colors(self, colors: dict[str, str] | None = None,
+                      chain_palette: Sequence[str] = CHAIN_PALETTE) -> dict[str, str]:
+        """Return a color per loaded chain, ignoring unloaded chains and filling gaps from the palette.
 
         Args:
-            colors: Dict mapping chain IDs to colors, or None.
-            chain_palette: Colors used for chains without an explicit color, in order.
+            colors: Chain ID to color, or None.
+            chain_palette: Colors for chains without an explicit color, in order.
+
+        Returns:
+            Chain key to color, for every loaded chain.
         """
         colors = {str(key): value for key, value in (colors or {}).items()}
         ignored = sorted(set(colors) - set(self.chain_ids))
@@ -137,11 +175,14 @@ class Viz3DMixin:
 
 ###################################### STRUCTURE TEXT
 
-    def _mmcif_string(self, chain_id=None):
+    def _mmcif_string(self, chain_id: str | None = None) -> str:
         """Return the structure, or one chain, as mmCIF text, which has no atom serial limit.
 
         Args:
             chain_id: Chain to export, or None for all chains.
+
+        Returns:
+            The mmCIF text.
         """
         selected = {self._require_chain(chain_id)} if chain_id is not None else set(self.chains)
         structure = copy.deepcopy(self.structure)
@@ -157,13 +198,16 @@ class Viz3DMixin:
 
 ###################################### OVERLAY
 
-    def _angles_overlay(self, element, text, angles_font_px=ANGLES_FONT_PX):
+    def _angles_overlay(self, element: str, text: str, angles_font_px: int = ANGLES_FONT_PX) -> str:
         """Return the bottom right overlay with the angle text and the reset and current buttons.
 
         Args:
             element: DOM id prefix of the view.
             text: Angle text to show initially.
             angles_font_px: Font size of the overlay in pixels.
+
+        Returns:
+            The overlay HTML.
         """
         button_style = f'cursor:pointer;background:none;border:none;color:white;font-size:{angles_font_px}px;padding:0'
         return (f'<div style="position:absolute;right:6px;bottom:6px;z-index:1;display:flex;align-items:center;gap:6px;'
@@ -174,24 +218,28 @@ class Viz3DMixin:
 
 ###################################### RENDERER
 
-    def _viewer_html(self, angles, chain_id, palette, style, background, size, show_angles,
-                     viz_format=VIZ_FORMAT, js_url=VIZ_JS_URL, label_js=CHAIN_LABEL_JS,
-                     angles_js=ANGLES_JS, angles_font_px=ANGLES_FONT_PX):
+    def _viewer_html(self, angles: Sequence[float], chain_id: str | None, palette: dict[str, str], style: str,
+                     background: str, size: int, show_angles: bool, viz_format: str = VIZ_FORMAT,
+                     js_url: str = VIZ_JS_URL, label_js: str = CHAIN_LABEL_JS, angles_js: str = ANGLES_JS,
+                     angles_font_px: int = ANGLES_FONT_PX) -> str:
         """Return HTML for a 3Dmol viewer posed at the input angles, with reset and current angle buttons.
 
         Args:
             angles: Rotation (x, y, z) in degrees.
             chain_id: Chain to show, or None for all chains.
-            palette: Dict mapping chain IDs to colors.
+            palette: Chain ID to color.
             style: Representation, one of VIZ_STYLES.
             background: Background color.
             size: Width and height of the view in pixels.
-            show_angles: If True, display the angles and the buttons in the bottom right corner.
+            show_angles: Whether to show the angles and buttons in the bottom right corner.
             viz_format: Structure format passed to 3Dmol.js.
             js_url: URL of the 3Dmol.js script.
             label_js: JavaScript click handler that toggles atom labels.
             angles_js: JavaScript that converts a quaternion into x, y, z degrees.
             angles_font_px: Font size of the angle overlay in pixels.
+
+        Returns:
+            The viewer HTML with its script.
         """
         key = (self.structure_id, tuple(angles), chain_id, sorted(palette.items()), style, background, size, show_angles,
                viz_format, js_url, label_js, angles_js, angles_font_px)
@@ -213,22 +261,25 @@ class Viz3DMixin:
 
 ###################################### PUBLIC ENTRY POINT
 
-    def show_structure_3d(self, angles=(0, 0, 0), chain_id=None, colors=None, title=None,
-                 style="cartoon", background=VIZ_BACKGROUND, size=VIZ_SIZE_PX, show_angles=DEFAULT_SHOW_ANGLES,
-                 chain_palette=CHAIN_PALETTE, viz_format=VIZ_FORMAT, js_url=VIZ_JS_URL, label_js=CHAIN_LABEL_JS,
-                 angles_js=ANGLES_JS, title_font_px=TITLE_FONT_PX, angles_font_px=ANGLES_FONT_PX):
-        """Show the structure in a Jupyter notebook as a clickable 3Dmol.js view with an optional centered title above it.
+    def show_structure_3d(self, angles: Sequence[float] = (0, 0, 0), chain_id: str | None = None,
+                          colors: dict[str, str] | None = None, title: str | None = None, style: str = "cartoon",
+                          background: str = VIZ_BACKGROUND, size: int = VIZ_SIZE_PX,
+                          show_angles: bool = DEFAULT_SHOW_ANGLES, chain_palette: Sequence[str] = CHAIN_PALETTE,
+                          viz_format: str = VIZ_FORMAT, js_url: str = VIZ_JS_URL, label_js: str = CHAIN_LABEL_JS,
+                          angles_js: str = ANGLES_JS, title_font_px: int = TITLE_FONT_PX,
+                          angles_font_px: int = ANGLES_FONT_PX) -> HTML:
+        """Show the structure in Jupyter as a clickable 3Dmol.js view, with an optional centered title.
 
         Args:
-            angles: Rotation (x, y, z) in degrees, applied as the pose and displayed when show_angles is True.
-            chain_id: Optional single chain to show, or None for all chains.
-            colors: Optional dict mapping chain IDs to colors, e.g. {'A': 'red', 'B': '#00aa00'}. Unloaded chains are ignored.
-            title: Optional title text rendered centered above the view in the same output.
-            style: Representation, one of 'cartoon', 'stick', 'sphere', or 'line'.
-            background: Background color, e.g. 'white', 'black', or '#f0f0f0'.
+            angles: Rotation (x, y, z) in degrees, applied as the pose and shown when show_angles is True.
+            chain_id: Single chain to show, or None for all chains.
+            colors: Chain ID to color, e.g. {'A': 'red'}; unloaded chains are ignored.
+            title: Title shown centered above the view.
+            style: Representation: 'cartoon', 'stick', 'sphere' or 'line'.
+            background: Background color, e.g. 'white' or '#f0f0f0'.
             size: Width and height of the view in pixels.
-            show_angles: If True, display the angles with a reset button (rebuilds the input pose) and a current button (reads the live orientation).
-            chain_palette: Colors used for chains without an explicit color, in order.
+            show_angles: Whether to show the angles with reset and read-current buttons.
+            chain_palette: Colors for chains without an explicit color, in order.
             viz_format: Structure format passed to 3Dmol.js.
             js_url: URL of the 3Dmol.js script.
             label_js: JavaScript click handler that toggles atom labels.
@@ -237,7 +288,10 @@ class Viz3DMixin:
             angles_font_px: Font size of the angle overlay in pixels.
 
         Returns:
-            An IPython HTML object containing the title and the 3Dmol.js view.
+            An IPython HTML object with the title and the view.
+
+        Raises:
+            ValueError: If angles does not hold three values or style is unknown.
         """
         if len(angles) != 3:
             raise ValueError("angles must contain three values (x, y, z) in degrees.")
@@ -253,25 +307,29 @@ class Viz3DMixin:
             html = heading + html
         log_completion(start, f"Rendered view of {self.structure_id} at angles {tuple(angles)}")
         return HTML(html)
-    jupy_viz = deprecated_method("jupy_viz", "show_structure_3d")
 
 
 ###################################### LAYOUT
 
 
-def side_by_side(*outputs, gap_px=SIDE_BY_SIDE_GAP_PX, size_px=VIZ_PANEL_SIZE_PX):
-    """Return one HTML object that places several show_structure_3d outputs in a row, wrapping if the notebook is narrow.
+def show_side_by_side_3d(*outputs: HTML, gap_px: int = SIDE_BY_SIDE_GAP_PX, size_px: int = VIZ_PANEL_SIZE_PX) -> HTML:
+    """Place several show_structure_3d outputs in a row, wrapping when the notebook is narrow.
 
-    Every view is shown as a size_px square panel, whatever size it was rendered at. The viewers are built after
-    3Dmol.js loads, so they take the panel size.
+    Every view becomes a size_px square panel, whatever size it was rendered at.
 
     Args:
-        *outputs: HTML objects returned by show_structure_3d, in left-to-right order.
-        gap_px: Horizontal and vertical spacing between views in pixels.
+        *outputs: Views returned by show_structure_3d, left to right.
+        gap_px: Spacing between views in pixels.
         size_px: Width and height of each panel in pixels.
+
+    Returns:
+        One HTML object holding all the views.
+
+    Raises:
+        ValueError: If no view is given.
     """
     if not outputs:
-        raise ValueError("side_by_side needs at least one view.")
+        raise ValueError("show_side_by_side_3d needs at least one view.")
     grid_id = f"viz3d-panels-{uuid.uuid4().hex[:8]}"
     style = (f"<style>#{grid_id} .viz3d-view{{width:{size_px}px !important;height:{size_px}px !important}}"
              f"#{grid_id} .viz3d-title{{width:{size_px}px !important}}</style>")

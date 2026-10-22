@@ -28,7 +28,7 @@ for folder in (TABLES, FIGURES, STRUCTURE):
 
 # Contact statistics report label chain IDs; plots take chain keys (author IDs by default)
 key_of = {record.chain_id: key for key, record in s.chains.items()}
-summary = s.summary()
+summary = s.chain_summary()
 stats = s.contact_statistics()
 inter = stats["pairs"].query("contact_type == 'inter'")
 inter_pairs = [(key_of[a], key_of[b]) for a, b in zip(inter["chain_a"], inter["chain_b"])]
@@ -40,16 +40,16 @@ summary_path = TABLES / f"{PDB_ID}_summary.tsv"
 summary.to_csv(summary_path, sep="\t", index=False)
 tables = [
     summary_path,
-    s.export_chains(outdir=TABLES),
+    s.export_chain_summary(outdir=TABLES),
     s.export_residue_mapping(outdir=TABLES),
-    s.export_residues(outdir=TABLES),
-    s.export_moieties(outdir=TABLES),
-    s.export_alignment_stats(outdir=TABLES),
-    s.export_alignment_positions(outdir=TABLES),
+    s.export_residue_table(outdir=TABLES),
+    s.export_moiety_table(outdir=TABLES),
+    s.export_reference_alignment_stats(outdir=TABLES),
+    s.export_reference_alignment_positions(outdir=TABLES),
     s.export_interface_complex(inter_pairs, outdir=TABLES),
     s.export_interface_residues(inter_pairs, outdir=TABLES),
-    s.export_contact_sequences(TABLES / f"{PDB_ID}_contact_sequences.tsv"),
-    s.export_contact_sequences(TABLES / f"{PDB_ID}_contact_sequences_reference.tsv", reference=True),
+    s.export_contact_strings(TABLES / f"{PDB_ID}_contact_sequences.tsv"),
+    s.export_contact_strings(TABLES / f"{PDB_ID}_contact_sequences_reference.tsv", reference=True),
 ]
 for key, frame in stats.items():
     path = TABLES / f"{PDB_ID}_contact_stats_{key}.tsv"
@@ -61,11 +61,11 @@ for key, frame in stats.items():
 chains = "_".join(polymers)
 figures = {
     # all chains on one map: intra-chain contacts in gray, the interface in color
-    f"contacts_{chains}": lambda: s.plot_contacts_multi(
+    f"contacts_{chains}": lambda: s.plot_multi_contact_map(
         polymers, cutoff=CUTOFF_NM, gray_cutoff=CUTOFF_NM * GRAY_FACTOR, size_in=3.5,
         show_color_legend=True, show_distance_legend=True),
     # same map at side-chain resolution
-    f"contacts_{chains}_sidechain": lambda: s.plot_contacts_multi(
+    f"contacts_{chains}_sidechain": lambda: s.plot_multi_contact_map(
         polymers, cutoff=SIDECHAIN_CUTOFF_NM, gray_cutoff=SIDECHAIN_CUTOFF_NM * GRAY_FACTOR, scheme="sidechain",
         size_in=3.5, show_color_legend=True, show_distance_legend=True),
 }
@@ -74,7 +74,7 @@ for name, plot in figures.items():
     figure_paths += s.export_plot(plot, name, outdir=FIGURES)
 
 # How the interface grows with the cutoff, one panel per cutoff
-maps = [lambda ax, c=c: s.plot_contacts_multi(polymers, cutoff=c, gray_cutoff=c * GRAY_FACTOR, size_in=3.5, ax=ax)
+maps = [lambda ax, c=c: s.plot_multi_contact_map(polymers, cutoff=c, gray_cutoff=c * GRAY_FACTOR, size_in=3.5, ax=ax)
         for c in GRID_CUTOFFS_NM]
 figure_paths.append(export_panels_pdf([(maps, f"{PDB_ID} contacts by cutoff")], FIGURES,
                                       filename=f"{PDB_ID}_contacts_by_cutoff.pdf",

@@ -7,7 +7,7 @@ import pytest
 
 matplotlib.use("Agg")
 
-from synced_structure import SyncedStructure, build_panel_grid, export_panels_pdf, side_by_side  # noqa: E402
+from synced_structure import SyncedStructure, build_panel_grid, export_panels_pdf, show_side_by_side_3d  # noqa: E402
 
 CIF = Path(__file__).parent / "data" / "1AAY.cif"
 
@@ -21,21 +21,21 @@ def sync():
 def test_chains_and_moieties(sync):
     assert sync.chain_ids == ["B", "C", "A"]
     assert sync.get_sequence("B") == "AGCGTGGGCGT"
-    assert set(sync.moiety_summary["moiety"]) == {"protein", "nucleic", "other"}
+    assert set(sync.moiety_table["moiety"]) == {"protein", "nucleic", "other"}
     assert sync.chains_by_moiety("nucleic") == ["A", "B"]
-    summary = sync.summary()
+    summary = sync.chain_summary()
     assert summary["mapping_fraction"].eq(1.0).all()
     assert dict(zip(summary["chain_id"], summary["moiety"])) == {"B": "nucleic", "C": "protein", "A": "nucleic"}
-    polymer = sync.moiety_summary.query("moiety != 'other'").groupby("chain_id")["moiety"].agg("+".join)
+    polymer = sync.moiety_table.query("moiety != 'other'").groupby("chain_id")["moiety"].agg("+".join)
     assert dict(zip(summary["chain_id"], summary["moiety"])) == polymer.to_dict()
     assert "partners" not in summary
-    with_partners = sync.summary(partners=True)
+    with_partners = sync.chain_summary(partners=True)
     assert dict(zip(with_partners["auth_chain_id"], with_partners["partners"])) == {"A": "B;C", "B": "A", "C": "A"}
     assert sync.get_external_ref("B") == "1AAY"
 
 
 def test_indices_are_one_based_and_consistent(sync):
-    residues = sync.residue_map
+    residues = sync.residue_table
     contacts = sync.compute_contacts(contact_type="all")
     assert residues["sequence_index"].min() == 1
     protein = residues[residues["chain_id"] == "C"]
@@ -48,8 +48,8 @@ def test_contacts_and_strings(sync, tmp_path):
     contacts = sync.compute_contacts(contact_type="inter", moieties=("protein", "nucleic", "other"))
     assert {"protein", "nucleic"} <= set(contacts["moiety_1"]) | set(contacts["moiety_2"])
     assert contacts.loc[contacts["moiety_2"] == "other", "sequence_index_2"].isna().all()
-    assert "1" in sync.get_contact_sequence("B")
-    path = sync.export_contact_sequences(tmp_path / "out" / "strings.tsv", reference=True)
+    assert "1" in sync.contact_string("B")
+    path = sync.export_contact_strings(tmp_path / "out" / "strings.tsv", reference=True)
     assert path.is_file()
     assert "\t" in path.read_text().splitlines()[0]
     assert sync.chain_contact_partners() == {"A": ["B", "C"], "B": ["A"], "C": ["A"]}
@@ -68,7 +68,7 @@ def test_matrices_and_statistics(sync):
 def test_interfaces(sync):
     complex_row = sync.interface_complex("A", "B")
     assert complex_row["dASA_A2"] > 0
-    assert len(sync.chain_partner_frame("A")) == 2
+    assert len(sync.chain_partner_table("A")) == 2
     residues = sync.interface_residues("A", "B")
     assert (residues["energy_per_partner"].abs() <= residues["contact_energy"].abs()).all()
 
@@ -90,9 +90,9 @@ def test_partner_structures(sync):
 
 
 def test_reference_numbering_keeps_hetero(sync):
-    before = sync.moiety_summary
+    before = sync.moiety_table
     sync.apply_reference_numbering()
-    after = sync.moiety_summary
+    after = sync.moiety_table
     assert before[before["moiety"] == "other"].equals(after[after["moiety"] == "other"])
     assert sync["A"].residues[0].id[1] == 3
 
@@ -100,16 +100,16 @@ def test_reference_numbering_keeps_hetero(sync):
 def test_plots_and_exports(sync, tmp_path):
     fig, _ = sync.plot_contact_map("A", "B")
     for chains in (("A", "B"), ("A", "B", "C")):
-        sync.plot_contacts_multi(chains, plddt=True, show_color_legend=True)
+        sync.plot_multi_contact_map(chains, plddt=True, show_color_legend=True)
     sync.plot_contact_map("A", "B", crop=True, value="distance", style="heatmap")
     with pytest.raises(ValueError):
-        sync.plot_contacts_multi(("A", "A"))
+        sync.plot_multi_contact_map(("A", "A"))
     paths = sync.export_plot(lambda: sync.plot_contact_map("A"), "map", outdir=tmp_path, formats=("png", "pdf"))
     assert all(p.is_file() for p in paths)
     pdf = export_panels_pdf([([lambda ax: sync.plot_contact_map("A", ax=ax)] * 2, "page")], tmp_path)
     assert pdf.is_file()
     assert build_panel_grid([lambda ax: ax.plot([0, 1])]).axes
-    for export in (sync.export_chains, sync.export_residues, sync.export_moieties, sync.export_alignment_stats):
+    for export in (sync.export_chain_summary, sync.export_residue_table, sync.export_moiety_table, sync.export_reference_alignment_stats):
         path = export(outdir=tmp_path)
         assert path.parent == tmp_path and path.suffix == ".tsv"
         assert "\t" in path.read_text().splitlines()[0]
@@ -118,7 +118,7 @@ def test_plots_and_exports(sync, tmp_path):
 def test_viz_and_config(sync, tmp_path):
     views = [sync.show_structure_3d(title="all"), sync.show_structure_3d(style="stick")]
     assert views[0].data != views[1].data
-    assert "<div" in side_by_side(*views).data
+    assert "<div" in show_side_by_side_3d(*views).data
     page = sync.export_structure_3d(outdir=tmp_path, title="all").read_text()
     assert page.startswith("<!doctype html>") and "3Dmol" in page and "<title>all</title>" in page
     config = tmp_path / "config.yaml"

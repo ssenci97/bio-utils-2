@@ -16,7 +16,7 @@ from Bio.PDB.Residue import Residue
 
 matplotlib.use("Agg")
 
-from synced_structure import SyncedStructure, rcsb, side_by_side  # noqa: E402
+from synced_structure import SyncedStructure, rcsb  # noqa: E402
 from synced_structure import utils  # noqa: E402
 from synced_structure.residues import residue_class  # noqa: E402
 from synced_structure.constants import MOIETY_NUCLEIC, MOIETY_OTHER  # noqa: E402
@@ -99,7 +99,7 @@ def test_multi_plot_refuses_more_pairs_than_colors(sync):
         clone.id = new_id
         sync.add_chain(clone, reference_sequence="ACDEFG", entity_id=str(10 + index))
     with pytest.raises(ValueError, match="pair_colors needs 15 colors"):
-        sync.plot_contacts_multi(("A", "B", "C", "X", "Y", "W"))
+        sync.plot_multi_contact_map(("A", "B", "C", "X", "Y", "W"))
 
 
 # chain mutation and renaming
@@ -129,12 +129,22 @@ def test_rename_chains_keeps_author_map_and_sequence(sync):
 
 
 def test_rename_by_sequence_reports_unmatched(sync):
-    report = sync.rename_by_sequence({"P": sync.get_sequence("B"), "Q": "WWWWWWWWWWWWWWW"})
+    report = sync.rename_chains_by_sequence({"P": sync.get_sequence("B"), "Q": "WWWWWWWWWWWWWWW"})
     statuses = dict(zip(report["new_chain_id"].fillna("-"), report["status"]))
     assert statuses["P"] == "renamed"
     assert statuses["Q"] == "unmatched_target"
     assert "P" in sync.chain_ids
     assert (report["status"] == "unmatched_chain").sum() == 2
+
+
+def test_sequence_matching_ignores_short_spurious_alignments(sync):
+    protein = sync.get_sequence("A")
+    found = sync.find_chains_by_sequence(protein[:20])
+    assert found["auth_chain_id"].tolist() == ["A"]
+    report = sync.rename_chains_by_sequence({"ZF": protein})
+    renamed = report[report["status"] == "renamed"]
+    assert renamed[["new_chain_id", "old_auth_chain_id"]].values.tolist() == [["ZF", "A"]]
+    assert sync["ZF"].chain_id == "C" and sync.get_sequence("ZF") == protein
 
 
 # loading
@@ -162,33 +172,6 @@ def test_log_completion_without_resource_module(monkeypatch, log_records):
     monkeypatch.setattr(utils, "resource", None)
     utils.log_completion(0.0, "done")
     assert any("max memory: n/a" in m for m in log_records.messages)
-
-
-# deprecated names and dict access
-
-def test_deprecated_method_names_forward(sync):
-    with pytest.warns(DeprecationWarning, match="block_contact_matrix"):
-        block = sync.complete_contacts("A", "B")
-    assert block["intra"].shape == sync.block_contact_matrix("A", "B")["intra"].shape
-    with pytest.warns(DeprecationWarning, match="interface_partner_labels"):
-        labels = sync.partners("A", "B")
-    assert labels == sync.interface_partner_labels("A", "B")
-    with pytest.warns(DeprecationWarning, match="show_structure_3d"):
-        view = sync.jupy_viz(title="old")
-    assert "<div" in side_by_side(view).data
-
-
-def test_deprecated_from_rcsb_id_forwards(monkeypatch):
-    calls = []
-    monkeypatch.setattr(SyncedStructure, "from_rcsb", classmethod(lambda cls, *a, **k: calls.append((a, k)) or "ok"))
-    with pytest.warns(DeprecationWarning, match="from_rcsb"):
-        assert SyncedStructure.from_rcsb_id("1abc", key_by="label") == "ok"
-    assert calls == [(("1abc",), {"key_by": "label"})]
-
-
-def test_dict_style_chain_access_is_deprecated(sync):
-    with pytest.warns(DeprecationWarning, match="use .residues"):
-        assert sync["A"]["residues"] is sync["A"].residues
 
 
 # RCSB search and publications, with requests mocked
@@ -233,7 +216,7 @@ def test_search_rcsb_no_hits_and_validation(monkeypatch):
         rcsb.search_rcsb(keywords=["x"], return_type="nope")
 
 
-def test_search_rcsb_pubs_keeps_partial_data_and_logs(monkeypatch, log_records):
+def test_fetch_rcsb_citations_keeps_partial_data_and_logs(monkeypatch, log_records):
     payload = {
         "errors": [{"message": "one entry unknown"}],
         "data": {"entries": [{
@@ -245,15 +228,15 @@ def test_search_rcsb_pubs_keeps_partial_data_and_logs(monkeypatch, log_records):
     }
     monkeypatch.setattr(rcsb.requests, "post", lambda *a, **k: _Response(payload=payload))
     df = pd.DataFrame({"pdb_id": ["1aay-1"]})
-    merged = rcsb.search_rcsb_pubs(df)
+    merged = rcsb.fetch_rcsb_citations(df)
     assert merged.loc[0, "title"] == "T"
     assert merged.loc[0, "pubmed_id"] == 123
     assert any("partial errors" in m for m in log_records.messages)
 
 
-def test_search_rcsb_pubs_missing_column():
+def test_fetch_rcsb_citations_missing_column():
     with pytest.raises(KeyError):
-        rcsb.search_rcsb_pubs(pd.DataFrame({"x": [1]}))
+        rcsb.fetch_rcsb_citations(pd.DataFrame({"x": [1]}))
 
 
 # shared categorical palette
@@ -267,3 +250,26 @@ def test_categorical_colors_come_from_palette():
     assert tuple(PALETTE) == tuple(CHAIN_PALETTE)
     assert sorted(MULTI_PAIR_COLORS) == sorted(PALETTE)
     assert CONTACT_MAP_COLOR in PALETTE
+
+
+# removed names
+
+REMOVED_NAMES = [
+    "subset", "match_chains", "rename_by_sequence", "summary", "residue_map", "moiety_summary", "reindex_chain",
+    "alignment_stats", "alignment_positions", "to_ca_trajectory", "get_contact_sequence",
+    "get_reference_contact_sequence", "export_contact_sequences", "plot_contacts_multi", "export_chains",
+    "export_residues", "export_moieties", "export_alignment_stats", "export_alignment_positions", "interface",
+    "interface_all", "chain_partner_frame", "buried_area", "initial_sasa", "buried_fraction", "contact_count",
+    "min_distance", "contact_score", "jupy_viz", "complete_contacts", "partners", "from_rcsb_id", "prepare_haddock",
+]
+
+
+def test_old_names_are_gone(sync):
+    import synced_structure
+    from synced_structure import residues
+
+    assert [name for name in REMOVED_NAMES if hasattr(SyncedStructure, name)] == []
+    assert not any(hasattr(synced_structure, name) for name in ("side_by_side", "search_rcsb_pubs", "HaddockSetup"))
+    assert not hasattr(residues, "residue_moiety")
+    with pytest.raises(TypeError):
+        sync["A"]["residues"]

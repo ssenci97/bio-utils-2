@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "synced_structure"
 version = "0.1.0"
-description = "Synchronized Biopython structures: chain mapping, contacts, contact maps, interfaces, and 3D views."
+description = "Synchronized Biopython structures: chain mapping, contacts, contact maps, interfaces, 3D views, and HADDOCK3 docking."
 requires-python = ">=3.10"
 authors = [{ name = "Sergio Senci", email = "sergio.senci@areasciencepark.it" }]
 dependencies = [
@@ -18,15 +18,71 @@ dependencies = [
     "requests",
     "tqdm",
     "ipython",
+    "typing_extensions; python_version < '3.11'",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ssenci97/bio-utils-2"
+Documentation = "https://github.com/ssenci97/bio-utils-2/tree/main/docs"
+Changelog = "https://github.com/ssenci97/bio-utils-2/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = [
+    "pytest",
+    "ruff",
+    "pydoclint",
+    "mypy",
+    "typeguard",
+    "pandas-stubs",
+    "types-PyYAML",
+    "types-requests",
+]
+haddock = ["haddock3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["network: tests that call live RCSB services (run with: pytest -m network)"]
-addopts = "-m 'not network'"
+markers = [
+    "network: tests that call live RCSB services (run with: pytest -m network)",
+    "haddock: tests that run the haddock3 executable at low throughput (run with: pytest -m haddock)",
+]
+addopts = "-m 'not network and not haddock'"
+
+[tool.ruff]
+line-length = 120
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["D", "ANN", "F"]
+ignore = ["ANN401"]   # Any is allowed where a value really is untyped (Biopython entities, config values)
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "ANN"]
+"examples/*" = ["D", "ANN"]
+"src/synced_structure/base.py" = ["D102"]   # type-checking stubs; documented where they are implemented
+
+[tool.pydoclint]
+style = "google"
+arg-type-hints-in-docstring = false
+check-return-types = false
+check-yield-types = false
+skip-checking-short-docstrings = false
+allow-init-docstring = true
+
+[tool.mypy]
+python_version = "3.12"   # numpy stubs need 3.12 syntax; runtime still supports 3.10
+files = ["src/synced_structure"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+module = ["mdtraj.*", "haddock.*", "jsonpickle.*", "IPython.*", "Bio.*", "tqdm.*", "matplotlib.*"]
+ignore_missing_imports = true

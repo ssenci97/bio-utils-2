@@ -1,8 +1,12 @@
 """Pairwise interface metrics for all chain pairs: buried surface area, contacts, distances, energies, and partners, keyed by standard and author chain IDs."""
 
+from __future__ import annotations
+
 ###################################### IMPORTS AND CONSTANTS
 
 import itertools
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -10,30 +14,48 @@ from Bio.PDB.Model import Model
 from Bio.PDB.SASA import ShrakeRupley
 from tqdm import tqdm
 
+from ._types import ChainPair, Moieties, Record, Self
+from .base import StructureState
 from .constants import (
     CONTACTS_CUTOFF_NM, INTERFACE_COMPLEX_COLUMNS, INTERFACE_ENERGY_PREFACTOR, INTERFACE_RESIDUE_COLUMNS,
     KYTE_DOOLITTLE_HYDROPATHY, POLYMER_MOIETIES, PROTEIN_3TO1, TIEN_MAX_ASA,
 )
 from .residues import is_heavy, residue_class
-from .utils import deprecated_method, log_info
+from .utils import log_info
+
+if TYPE_CHECKING:
+    from Bio.PDB.Chain import Chain
+    from Bio.PDB.Residue import Residue
+
+ResidueKey = tuple[str, tuple[str, int, str]]
 
 
-def split_partners(text):
-    """Split a semicolon-separated partner string into a list of non-empty labels."""
+def split_partners(text: object) -> list[str]:
+    """Split a semicolon-separated partner string into its non-empty labels.
+
+    Args:
+        text: Partner string, such as 'B12 LYS;B15 ASP'.
+
+    Returns:
+        The partner labels.
+    """
     return [p for p in str(text).split(";") if p]
 
 ###################################### SASA AND ATOM GEOMETRY
 
 
-class InterfaceMixin:
+class InterfaceMixin(StructureState):
     """Pairwise interface metrics: buried surface area, contacts, distances, energies, and partner tables."""
 
     @staticmethod
-    def _heavy_atoms(residues):
+    def _heavy_atoms(residues: Sequence[Residue]) -> tuple[np.ndarray, np.ndarray]:
         """Return heavy-atom coordinates and the residue index owning each atom.
 
         Args:
-            residues: List of Biopython Residues.
+            residues: Biopython residues.
+
+        Returns:
+            (coordinates in A, owning residue index per atom).
         """
         coords, owners = [], []
         for index, residue in enumerate(residues):
@@ -44,11 +66,14 @@ class InterfaceMixin:
         return np.array(coords, float).reshape(-1, 3), np.array(owners, int)
 
     @staticmethod
-    def _residue_sasa(chains):
-        """Return {(chain_id, residue_id): SASA in A^2} for polymer residues, computed on copies of the chains.
+    def _residue_sasa(chains: Sequence[Chain]) -> dict[ResidueKey, float]:
+        """Return the SASA of each polymer residue, computed on copies of the chains.
 
         Args:
-            chains: List of Biopython Chains; ligands, ions, and water are excluded from the calculation.
+            chains: Biopython chains; ligands, ions and water are left out of the calculation.
+
+        Returns:
+            (chain ID, residue ID) to SASA in A^2.
         """
         model = Model(0)
         for chain in chains:
@@ -60,15 +85,19 @@ class InterfaceMixin:
         return {(chain.id, residue.id): residue.sasa for chain in model for residue in chain}
 
     @staticmethod
-    def _atom_contacts(xa, xb, cutoff, score_cutoff, block):
-        """Return contact count, score_sum, minimum distance, and per-atom contact masks for two atom sets.
+    def _atom_contacts(xa: np.ndarray, xb: np.ndarray, cutoff: float, score_cutoff: float,
+                       block: int) -> tuple[int, float, float, np.ndarray, np.ndarray]:
+        """Return contact statistics between two atom sets.
 
         Args:
-            xa: Coordinates of atoms in the first set.
-            xb: Coordinates of atoms in the second set.
+            xa: Coordinates of the first atom set.
+            xb: Coordinates of the second atom set.
             cutoff: Contact distance cutoff in A.
-            score_cutoff: Distance cutoff in A for the inverse-distance score_sum.
+            score_cutoff: Distance cutoff in A for the inverse-distance score.
             block: Number of rows processed per block.
+
+        Returns:
+            (contact count, score, minimum distance, contact mask of xa, contact mask of xb).
         """
         n_contacts, score_sum, min_dist = 0, 0.0, np.inf
         contact_mask_a, contact_mask_b = np.zeros(len(xa), bool), np.zeros(len(xb), bool)
@@ -84,8 +113,9 @@ class InterfaceMixin:
         return n_contacts, score_sum, min_dist, contact_mask_a, contact_mask_b
 
     @staticmethod
-    def _residue_min_distances(xa, oa, xb, ob, na, nb, block):
-        """Return an (na, nb) matrix of minimum heavy-atom distances between residue pairs.
+    def _residue_min_distances(xa: np.ndarray, oa: np.ndarray, xb: np.ndarray, ob: np.ndarray, na: int, nb: int,
+                               block: int) -> np.ndarray:
+        """Return the minimum heavy-atom distance of every residue pair.
 
         Args:
             xa: Coordinates of atoms in the first set.
@@ -95,6 +125,9 @@ class InterfaceMixin:
             na: Number of residues in the first set.
             nb: Number of residues in the second set.
             block: Number of rows processed per block.
+
+        Returns:
+            An (na, nb) matrix of distances in A.
         """
         out = np.full((na, nb), np.inf, np.float32)
         for start in range(0, len(xa), block):
@@ -103,21 +136,27 @@ class InterfaceMixin:
         return out
 
     @staticmethod
-    def _hydrophobicity(residue):
-        """Return the hydropathy value of a residue, or 0.0 if unknown.
+    def _hydrophobicity(residue: Residue) -> float:
+        """Return the Kyte-Doolittle hydropathy of a residue.
 
         Args:
-            residue: Biopython Residue.
+            residue: Biopython residue.
+
+        Returns:
+            The hydropathy, or 0.0 if unknown.
         """
         return KYTE_DOOLITTLE_HYDROPATHY.get(PROTEIN_3TO1.get(residue.get_resname().upper(), "X"), 0.0)
 
 ###################################### PER-CHAIN GEOMETRY
 
-    def _chain_geometry(self, chain_key):
-        """Return cached per-chain geometry: polymer residues, heavy atoms, isolated SASA, and hydropathy.
+    def _chain_geometry(self, chain_key: str) -> Record:
+        """Return cached per-chain geometry: polymer residues, heavy atoms, isolated SASA and hydropathy.
 
         Args:
-            chain_key: Chain key as held by the structure.
+            chain_key: Chain key.
+
+        Returns:
+            The geometry record of the chain.
         """
         key = ("geometry", chain_key)
         if key not in self._interface_cache:
@@ -139,12 +178,18 @@ class InterfaceMixin:
 
 ###################################### INTERFACE COMPUTATION
 
-    def _compute_interface(self, chain_a, chain_b):
+    def _compute_interface(self, chain_a: str, chain_b: str) -> Record:
         """Compute complex-level and residue-level interface metrics for two chains.
 
         Args:
             chain_a: First chain key.
             chain_b: Second chain key.
+
+        Returns:
+            {'complex': metrics dict, 'residues': residue table}.
+
+        Raises:
+            ValueError: If either chain has no heavy atoms.
         """
         cutoff = self.config["interface_contact_cutoff_a"]
         score_cutoff = self.config["interface_score_cutoff_a"]
@@ -188,21 +233,25 @@ class InterfaceMixin:
         )
         return {"complex": complex_row, "residues": pd.DataFrame(rows, columns=INTERFACE_RESIDUE_COLUMNS)}
 
-    def _residue_rows(self, pair, chain_key, geom, other, complex_sasa, energy_sum, n_in_score, n_partners,
-                      min_dists, partner_mask):
-        """Return one row per residue of one chain that has at least one partner within the contact cutoff.
+    def _residue_rows(self, pair: str, chain_key: str, geom: Record, other: Record,
+                      complex_sasa: dict[ResidueKey, float], energy_sum: np.ndarray, n_in_score: np.ndarray,
+                      n_partners: np.ndarray, min_dists: np.ndarray, partner_mask: np.ndarray) -> list[Record]:
+        """Return one row per residue of one chain with at least one partner within the contact cutoff.
 
         Args:
             pair: Pair label, such as 'A-B'.
             chain_key: Chain key of this side.
             geom: Cached geometry of this side.
             other: Cached geometry of the partner side.
-            complex_sasa: {(chain_id, residue_id): SASA} of the complex.
+            complex_sasa: (chain ID, residue ID) to SASA in the complex.
             energy_sum: Summed contact energy per residue of this side.
             n_in_score: Number of partner atoms within the score cutoff per residue.
             n_partners: Number of partner residues within the contact cutoff per residue.
             min_dists: Minimum distance to any partner residue per residue, in A.
-            partner_mask: Boolean matrix (residues of this side by residues of the partner) of contacts.
+            partner_mask: Contact matrix, residues of this side by residues of the partner.
+
+        Returns:
+            The residue rows.
         """
         rows = []
         for index, residue in enumerate(geom["residues"]):
@@ -234,12 +283,18 @@ class InterfaceMixin:
 
 ###################################### INTERFACE ACCESSORS
 
-    def interface(self, chain_a="A", chain_b="B"):
-        """Return {'complex': dict, 'residues': DataFrame} for two chains, using the cache when possible.
+    def interface_metrics(self, chain_a: str = "A", chain_b: str = "B") -> Record:
+        """Return complex-level and residue-level interface metrics of two chains, cached.
 
         Args:
             chain_a: First chain identifier, standard or author.
             chain_b: Second chain identifier, standard or author.
+
+        Returns:
+            {'complex': metrics dict, 'residues': residue table}.
+
+        Raises:
+            ValueError: If both identifiers name the same chain.
         """
         chain_a, chain_b = self._require_chain(chain_a), self._require_chain(chain_b)
         if chain_a == chain_b:
@@ -251,17 +306,20 @@ class InterfaceMixin:
         cached = self._interface_cache[key]
         return {"complex": dict(cached["complex"]), "residues": cached["residues"].copy()}
 
-    def interface_all(self, chain_pairs=None):
-        """Return unified complex and residue tables for every chain pair, skipping pairs that cannot be computed.
+    def interface_metrics_all(self, chain_pairs: Sequence[ChainPair] | None = None) -> dict[str, pd.DataFrame]:
+        """Return complex and residue tables for many chain pairs, skipping pairs that cannot be computed.
 
         Args:
-            chain_pairs: Iterable of (chain_a, chain_b) tuples, or None for all pairs.
+            chain_pairs: (chain_a, chain_b) pairs, or None for all pairs.
+
+        Returns:
+            {'complex': one row per pair, 'residues': interface residue rows}.
         """
         pairs = list(chain_pairs or itertools.combinations(self.chain_ids, 2))
         complexes, residues = [], []
         for chain_a, chain_b in tqdm(pairs, desc="pairs", unit="pair", leave=False):
             try:
-                result = self.interface(chain_a, chain_b)
+                result = self.interface_metrics(chain_a, chain_b)
             except ValueError as ex:
                 log_info(f"{self.structure_id}: pair {chain_a}-{chain_b} skipped, {ex}")
                 continue
@@ -273,46 +331,60 @@ class InterfaceMixin:
                          else pd.DataFrame(columns=INTERFACE_RESIDUE_COLUMNS))
         return {"complex": complex_frame, "residues": residue_frame}
 
-    def chain_partner_interfaces(self, chain_id, cutoff=CONTACTS_CUTOFF_NM):
-        """Return {'{structure_id}_{chain}_{partner}': interface dict} for every contact partner of one chain.
+    def chain_partner_interfaces(self, chain_id: str, cutoff: float = CONTACTS_CUTOFF_NM) -> dict[str, Record]:
+        """Return interface_metrics for every contact partner of one chain.
 
         Args:
             chain_id: Chain identifier, standard or author.
             cutoff: Contact cutoff in nm, passed to chain_contact_partners.
+
+        Returns:
+            '{structure_id}_{chain}_{partner}' to the interface_metrics of that pair.
         """
         chain_id = self._require_chain(chain_id)
         out = {}
         for partner in self.chain_contact_partners(cutoff=cutoff).get(chain_id, []):
             try:
-                out[f"{self.structure_id}_{chain_id}_{partner}"] = self.interface(chain_id, partner)
+                out[f"{self.structure_id}_{chain_id}_{partner}"] = self.interface_metrics(chain_id, partner)
             except ValueError as ex:
                 log_info(f"{self.structure_id}: pair {chain_id}-{partner} skipped, {ex}")
         return out
 
-    def chain_partner_structures(self, chain_id, cutoff=CONTACTS_CUTOFF_NM, moieties=POLYMER_MOIETIES):
-        """Return {'{structure_id}_{chain}_{partner}': SyncedStructure of the pair} for every contact partner of one chain.
+    def chain_partner_structures(self, chain_id: str, cutoff: float = CONTACTS_CUTOFF_NM,
+                                 moieties: Moieties = POLYMER_MOIETIES) -> dict[str, Self]:
+        """Return a two-chain structure for every contact partner of one chain.
 
-        Keys match chain_partner_interfaces. Each pair is built with subset(), so user-set references and metadata are kept.
+        Each pair is built with subset_chains(), so user-set references and metadata are kept.
 
         Args:
             chain_id: Chain identifier, standard or author.
             cutoff: Contact cutoff in nm, passed to chain_contact_partners.
             moieties: Biomolecule types whose contact points are compared.
+
+        Returns:
+            '{structure_id}_{chain}_{partner}' to the pair structure; keys match chain_partner_interfaces.
         """
         chain_id = self._require_chain(chain_id)
         out = {}
         for partner in self.chain_contact_partners(cutoff=cutoff, moieties=moieties).get(chain_id, []):
             name = f"{self.structure_id}_{chain_id}_{partner}"
-            out[name] = self.subset([chain_id, partner], structure_id=name)
+            out[name] = self.subset_chains([chain_id, partner], structure_id=name)
         return out
 
-    def chain_partner_frame(self, chain_id, cutoff=CONTACTS_CUTOFF_NM, level="complex"):
-        """Return a DataFrame with one row per interface pair of a chain, or per residue of those pairs.
+    def chain_partner_table(self, chain_id: str, cutoff: float = CONTACTS_CUTOFF_NM,
+                            level: str = "complex") -> pd.DataFrame:
+        """Return the interface rows of every contact partner of one chain.
 
         Args:
             chain_id: Chain identifier, standard or author.
             cutoff: Contact cutoff in nm, passed to chain_partner_interfaces.
             level: 'complex' for one row per pair, or 'residues' for the residue rows of every pair.
+
+        Returns:
+            The interface table.
+
+        Raises:
+            ValueError: If level is not 'complex' or 'residues'.
         """
         if level not in ("complex", "residues"):
             raise ValueError("level must be 'complex' or 'residues'.")
@@ -322,59 +394,114 @@ class InterfaceMixin:
         frames = [v["residues"] for v in interfaces.values() if not v["residues"].empty]
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=INTERFACE_RESIDUE_COLUMNS)
 
-    def interface_complex(self, chain_a="A", chain_b="B"):
-        """Return complex-level interface metrics as a dict.
+    def interface_complex(self, chain_a: str = "A", chain_b: str = "B") -> Record:
+        """Return the complex-level interface metrics of two chains.
 
         Args:
             chain_a: First chain identifier.
             chain_b: Second chain identifier.
+
+        Returns:
+            The metrics, one value per INTERFACE_COMPLEX_COLUMNS entry.
         """
-        return self.interface(chain_a, chain_b)["complex"]
+        return self.interface_metrics(chain_a, chain_b)["complex"]
 
-    def interface_residues(self, chain_a="A", chain_b="B"):
-        """Return residue-level interface metrics as a DataFrame.
+    def interface_residues(self, chain_a: str = "A", chain_b: str = "B") -> pd.DataFrame:
+        """Return the residue-level interface metrics of two chains.
 
         Args:
             chain_a: First chain identifier.
             chain_b: Second chain identifier.
+
+        Returns:
+            One row per interface residue.
         """
-        return self.interface(chain_a, chain_b)["residues"]
+        return self.interface_metrics(chain_a, chain_b)["residues"]
 
-    def buried_area(self, chain_a="A", chain_b="B"):
-        """Return the buried surface area in A^2 between two chains."""
-        return self.interface_complex(chain_a, chain_b)["dASA_A2"]
-
-    def initial_sasa(self, chain_a="A", chain_b="B"):
-        """Return the sum of isolated SASA of both chains in A^2."""
-        return self.interface_complex(chain_a, chain_b)["initial_sasa_A2"]
-
-    def buried_fraction(self, chain_a="A", chain_b="B"):
-        """Return buried area divided by initial SASA."""
-        return self.interface_complex(chain_a, chain_b)["frac_dASA"]
-
-    def contact_count(self, chain_a="A", chain_b="B"):
-        """Return the number of heavy-atom pairs within the contact cutoff."""
-        return self.interface_complex(chain_a, chain_b)["n_contacts"]
-
-    def min_distance(self, chain_a="A", chain_b="B"):
-        """Return the minimum heavy-atom distance between two chains in A."""
-        return self.interface_complex(chain_a, chain_b)["min_dist_A"]
-
-    def contact_score(self, chain_a="A", chain_b="B"):
-        """Return the sum of inverse heavy-atom distances within the score cutoff."""
-        return self.interface_complex(chain_a, chain_b)["contact_score"]
-
-    def interface_partner_labels(self, chain_a="A", chain_b="B"):
-        """Return a dict mapping interface residue labels to their partner labels for one chain pair.
+    def interface_buried_area(self, chain_a: str = "A", chain_b: str = "B") -> float:
+        """Return the buried surface area between two chains.
 
         Args:
             chain_a: First chain identifier.
             chain_b: Second chain identifier.
+
+        Returns:
+            The buried area in A^2.
+        """
+        return float(self.interface_complex(chain_a, chain_b)["dASA_A2"])
+
+    def interface_initial_sasa(self, chain_a: str = "A", chain_b: str = "B") -> float:
+        """Return the summed SASA of both isolated chains.
+
+        Args:
+            chain_a: First chain identifier.
+            chain_b: Second chain identifier.
+
+        Returns:
+            The SASA in A^2.
+        """
+        return float(self.interface_complex(chain_a, chain_b)["initial_sasa_A2"])
+
+    def interface_buried_fraction(self, chain_a: str = "A", chain_b: str = "B") -> float:
+        """Return the buried area divided by the initial SASA.
+
+        Args:
+            chain_a: First chain identifier.
+            chain_b: Second chain identifier.
+
+        Returns:
+            The buried fraction.
+        """
+        return float(self.interface_complex(chain_a, chain_b)["frac_dASA"])
+
+    def interface_atom_contact_count(self, chain_a: str = "A", chain_b: str = "B") -> int:
+        """Return the number of heavy-atom pairs within the contact cutoff.
+
+        Args:
+            chain_a: First chain identifier.
+            chain_b: Second chain identifier.
+
+        Returns:
+            The contact count.
+        """
+        return int(self.interface_complex(chain_a, chain_b)["n_contacts"])
+
+    def interface_min_distance_a(self, chain_a: str = "A", chain_b: str = "B") -> float:
+        """Return the minimum heavy-atom distance between two chains.
+
+        Args:
+            chain_a: First chain identifier.
+            chain_b: Second chain identifier.
+
+        Returns:
+            The distance in A.
+        """
+        return float(self.interface_complex(chain_a, chain_b)["min_dist_A"])
+
+    def interface_contact_score(self, chain_a: str = "A", chain_b: str = "B") -> float:
+        """Return the sum of inverse heavy-atom distances within the score cutoff.
+
+        Args:
+            chain_a: First chain identifier.
+            chain_b: Second chain identifier.
+
+        Returns:
+            The contact score.
+        """
+        return float(self.interface_complex(chain_a, chain_b)["contact_score"])
+
+    def interface_partner_labels(self, chain_a: str = "A", chain_b: str = "B") -> dict[str, list[str]]:
+        """Return the partner residues of each interface residue of two chains.
+
+        Args:
+            chain_a: First chain identifier.
+            chain_b: Second chain identifier.
+
+        Returns:
+            Residue label, such as 'A12 LYS', to its partner labels.
         """
         frame = self.interface_residues(chain_a, chain_b)
         return {
             f"{row.chain}{row.resid} {row.resname}": split_partners(row.partners)
             for row in frame.itertuples(index=False)
         }
-
-    partners = deprecated_method("partners", "interface_partner_labels")

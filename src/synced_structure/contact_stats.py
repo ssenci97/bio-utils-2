@@ -1,43 +1,72 @@
 """Contact statistics: per chain pair coverage and density, per-residue profiles, sequence separation, and moiety pairs."""
 
+from __future__ import annotations
+
 ###################################### IMPORTS AND CONSTANTS
 
 from collections import Counter
+from collections.abc import Iterator
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from ._types import ChainRefs, Moieties
+from .base import StructureState
 from .constants import (
     CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, MOIETY_PAIR_COLUMNS, PAIR_STAT_COLUMNS, PROFILE_COLUMNS,
     SEPARATION_COLUMNS,
 )
 
+ResidueToken = int | tuple[str, int, str]
 
-def _residue_token(index, resnum, resname):
-    """Return a residue identifier: the sequence index for polymer residues, (resnum, resname) for hetero ones."""
+
+def _residue_token(index: Any, resnum: int, resname: str) -> ResidueToken:
+    """Identify a residue: by sequence index if polymer, by (resnum, resname) if hetero.
+
+    Args:
+        index: 1-based sequence index, or NA for hetero residues.
+        resnum: Residue number.
+        resname: Residue name.
+
+    Returns:
+        The sequence index, or ('hetero', resnum, resname).
+    """
     return ("hetero", int(resnum), resname) if pd.isna(index) else int(index)
 
 
-def _contact_sides(contacts):
-    """Yield (label, residue_id, distance) for both residues of every contact row."""
-    for row in contacts.itertuples(index=False):
-        yield row.chain_1, _residue_token(row.sequence_index_1, row.resnum_1, row.resname_1), row.min_distance_nm
-        yield row.chain_2, _residue_token(row.sequence_index_2, row.resnum_2, row.resname_2), row.min_distance_nm
+def _contact_sides(contacts: pd.DataFrame) -> Iterator[tuple[str, ResidueToken, float]]:
+    """Walk both residues of every contact row.
+
+    Args:
+        contacts: Contacts table.
+
+    Yields:
+        (chain label, residue token, distance in nm).
+    """
+    for row in contacts.to_dict("records"):
+        distance = float(row["min_distance_nm"])
+        for side in ("1", "2"):
+            token = _residue_token(row[f"sequence_index_{side}"], int(row[f"resnum_{side}"]), str(row[f"resname_{side}"]))
+            yield str(row[f"chain_{side}"]), token, distance
 
 ###################################### STATISTICS
 
 
-class ContactStatsMixin:
+class ContactStatsMixin(StructureState):
     """Contact statistics per chain pair, per contact-point residue, per sequence separation, and per moiety pair."""
 
-    def _pair_statistics(self, contacts, moieties):
-        """Return one row per chain pair (or chain, for intra-chain contacts) with counts, coverage, density, and distances.
+    def _pair_statistics(self, contacts: pd.DataFrame, moieties: Moieties) -> pd.DataFrame:
+        """Summarize contacts per chain pair (or per chain, for intra-chain contacts).
 
         Coverage uses the number of contact-point residues in each chain, so moieties left out do not dilute it.
 
         Args:
-            contacts: Contacts DataFrame over all chains.
+            contacts: Contacts table over all chains.
             moieties: Biomolecule types used for the contacts.
+
+        Returns:
+            One row per pair with counts, coverage, density, and distances.
         """
         if contacts.empty:
             return pd.DataFrame(columns=PAIR_STAT_COLUMNS)
@@ -47,7 +76,7 @@ class ContactStatsMixin:
         for label_a, label_b in pairs:
             same = label_a == label_b
             pair_rows = self._pair_rows(contacts, label_a, label_b)
-            contacted_by_chain = {}
+            contacted_by_chain: dict[str, set[ResidueToken]] = {}
             for label, residue, _ in _contact_sides(pair_rows):
                 contacted_by_chain.setdefault(label, set()).add(residue)
             seen_a, seen_b = contacted_by_chain.get(label_a, set()), contacted_by_chain.get(label_b, set())
@@ -70,15 +99,20 @@ class ContactStatsMixin:
             })
         return pd.DataFrame(rows, columns=PAIR_STAT_COLUMNS)
 
-    def _residue_profile(self, contacts, moieties, chain_keys=None):
-        """Return one row per contact-point residue with its number of contacts and nearest partner distance.
+    def _residue_profile(self, contacts: pd.DataFrame, moieties: Moieties,
+                         chain_keys: ChainRefs | None = None) -> pd.DataFrame:
+        """Count contacts and the nearest partner distance of every contact-point residue.
 
         Args:
-            contacts: Contacts DataFrame.
+            contacts: Contacts table.
             moieties: Biomolecule types to include.
             chain_keys: Chain keys to profile, or None for all.
+
+        Returns:
+            One row per contact-point residue.
         """
-        counts, nearest = Counter(), {}
+        counts: Counter[tuple[str, ResidueToken]] = Counter()
+        nearest: dict[tuple[str, ResidueToken], float] = {}
         for label, residue, distance in _contact_sides(contacts):
             counts[(label, residue)] += 1
             nearest[(label, residue)] = min(nearest.get((label, residue), np.inf), float(distance))
@@ -101,8 +135,15 @@ class ContactStatsMixin:
         return pd.DataFrame(rows, columns=PROFILE_COLUMNS).astype({"sequence_index": "Int64"})
 
     @staticmethod
-    def _separation_frame(contacts):
-        """Return intra-chain polymer contacts with their sequence separation |i - j|."""
+    def _separation_frame(contacts: pd.DataFrame) -> pd.DataFrame:
+        """Tabulate intra-chain polymer contacts with their sequence separation.
+
+        Args:
+            contacts: Contacts table.
+
+        Returns:
+            One row per intra-chain contact with |i - j| and its distance.
+        """
         intra = contacts[contacts["chain_1"] == contacts["chain_2"]].dropna(subset=["sequence_index_1", "sequence_index_2"])
         return pd.DataFrame({
             "chain_id": intra["chain_1"].to_numpy(),
@@ -111,8 +152,15 @@ class ContactStatsMixin:
         }, columns=SEPARATION_COLUMNS)
 
     @staticmethod
-    def _moiety_pair_frame(contacts):
-        """Return contact counts and distances grouped by moiety pair, such as protein/nucleic."""
+    def _moiety_pair_frame(contacts: pd.DataFrame) -> pd.DataFrame:
+        """Group contacts by moiety pair, such as protein/nucleic.
+
+        Args:
+            contacts: Contacts table.
+
+        Returns:
+            Contact counts and distance summary per moiety pair.
+        """
         if contacts.empty:
             return pd.DataFrame(columns=MOIETY_PAIR_COLUMNS)
         frame = pd.DataFrame({
@@ -127,8 +175,18 @@ class ContactStatsMixin:
         out[["median_nm", "mean_nm"]] = out[["median_nm", "mean_nm"]].round(4)
         return out[MOIETY_PAIR_COLUMNS]
 
-    def _statistics_from_contacts(self, contacts, moieties, chain_keys=None):
-        """Return the contact_statistics dict for precomputed contacts, profiling only chain_keys if given."""
+    def _statistics_from_contacts(self, contacts: pd.DataFrame, moieties: Moieties,
+                                  chain_keys: ChainRefs | None = None) -> dict[str, pd.DataFrame]:
+        """Compute the contact_statistics tables from precomputed contacts.
+
+        Args:
+            contacts: Contacts table.
+            moieties: Biomolecule types used for the contacts.
+            chain_keys: Chain keys to profile, or None for all.
+
+        Returns:
+            The same dict as contact_statistics.
+        """
         return {
             "pairs": self._pair_statistics(contacts, moieties),
             "profile": self._residue_profile(contacts, moieties, chain_keys),
@@ -136,19 +194,19 @@ class ContactStatsMixin:
             "moiety_pairs": self._moiety_pair_frame(contacts),
         }
 
-    def contact_statistics(self, cutoff=CONTACTS_CUTOFF_NM, moieties=DEFAULT_CONTACT_MOIETIES, scheme="ca"):
-        """Return contact statistics as a dict of DataFrames.
-
-        Keys:
-            'pairs': per chain pair, contact counts, residue coverage, density, and distance summary.
-            'profile': per contact-point residue, contact count and nearest partner distance.
-            'separation': intra-chain contacts with sequence separation.
-            'moiety_pairs': contact counts and distances per moiety pair.
+    def contact_statistics(self, cutoff: float = CONTACTS_CUTOFF_NM, moieties: Moieties = DEFAULT_CONTACT_MOIETIES,
+                           scheme: str = "ca") -> dict[str, pd.DataFrame]:
+        """Compute contact statistics over all chains.
 
         Args:
             cutoff: Distance cutoff in nm.
             moieties: Biomolecule types to include.
             scheme: Contact scheme, 'ca' or 'sidechain'.
+
+        Returns:
+            Dict of tables: 'pairs' (per chain pair counts, coverage, density, distances), 'profile' (per
+            contact-point residue count and nearest distance), 'separation' (intra-chain contacts with sequence
+            separation), and 'moiety_pairs' (counts and distances per moiety pair).
         """
         contacts = self.compute_contacts(cutoff=cutoff, contact_type="all", scheme=scheme, moieties=moieties)
         return self._statistics_from_contacts(contacts, moieties)
