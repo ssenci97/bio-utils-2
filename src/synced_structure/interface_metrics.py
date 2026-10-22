@@ -289,6 +289,23 @@ class InterfaceMixin:
                 log_info(f"{self.structure_id}: pair {chain_id}-{partner} skipped, {ex}")
         return out
 
+    def chain_partner_structures(self, chain_id, cutoff=CONTACTS_CUTOFF_NM, moieties=POLYMER_MOIETIES):
+        """Return {'{structure_id}_{chain}_{partner}': SyncedStructure of the pair} for every contact partner of one chain.
+
+        Keys match chain_partner_interfaces. Each pair is built with subset(), so user-set references and metadata are kept.
+
+        Args:
+            chain_id: Chain identifier, standard or author.
+            cutoff: Contact cutoff in nm, passed to chain_contact_partners.
+            moieties: Biomolecule types whose contact points are compared.
+        """
+        chain_id = self._require_chain(chain_id)
+        out = {}
+        for partner in self.chain_contact_partners(cutoff=cutoff, moieties=moieties).get(chain_id, []):
+            name = f"{self.structure_id}_{chain_id}_{partner}"
+            out[name] = self.subset([chain_id, partner], structure_id=name)
+        return out
+
     def chain_partner_frame(self, chain_id, cutoff=CONTACTS_CUTOFF_NM, level="complex"):
         """Return a DataFrame with one row per interface pair of a chain, or per residue of those pairs.
 

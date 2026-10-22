@@ -26,6 +26,9 @@ def test_chains_and_moieties(sync):
     summary = sync.summary()
     assert summary["mapping_fraction"].eq(1.0).all()
     assert dict(zip(summary["chain_id"], summary["moiety"])) == {"B": "nucleic", "C": "protein", "A": "nucleic"}
+    assert "partners" not in summary
+    with_partners = sync.summary(partners=True)
+    assert dict(zip(with_partners["auth_chain_id"], with_partners["partners"])) == {"A": "B;C", "B": "A", "C": "A"}
     assert sync.get_external_ref("B") == "1AAY"
 
 
@@ -66,6 +69,22 @@ def test_interfaces(sync):
     assert len(sync.chain_partner_frame("A")) == 2
     residues = sync.interface_residues("A", "B")
     assert (residues["energy_per_partner"].abs() <= residues["contact_energy"].abs()).all()
+
+
+def test_partner_structures(sync):
+    sync.set_reference_sequence("B", "TT" + sync.get_sequence("B"))
+    pairs = sync.chain_partner_structures("A")
+    assert list(pairs) == ["1AAY_A_B", "1AAY_A_C"]
+    child = pairs["1AAY_A_B"]
+    assert child.structure_id == "1AAY_A_B"
+    assert sorted(child.chain_ids) == ["A", "B"]
+    assert sync.chain_ids == ["B", "C", "A"]
+    assert child.get_reference_sequence("B") == sync.get_reference_sequence("B")
+    assert child.mmcif_dict is sync.mmcif_dict
+    child_row, parent_row = child.interface_complex("A", "B"), sync.interface_complex("A", "B")
+    assert child_row.pop("structure") == "1AAY_A_B"
+    parent_row.pop("structure")
+    assert child_row == parent_row
 
 
 def test_reference_numbering_keeps_hetero(sync):

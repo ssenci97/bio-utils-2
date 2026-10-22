@@ -174,7 +174,7 @@ Attributes: `structure`, `model`, `structure_id`, `file_format`, `mmcif_dict`, `
 | Method | Purpose |
 |---|---|
 | `chain_ids` *(property)* | Loaded chain keys |
-| `summary()` | Label/author IDs, entity, polymer moiety, description, external ref, refseq ID, coverage |
+| `summary(partners=False, cutoff=..., moieties=...)` | Label/author IDs, entity, polymer moiety, description, external ref, refseq ID, coverage; `partners=True` adds a `;`-joined `partners` column (computes contacts) |
 | `get_sequence(chain_id)` / `get_reference_sequence(chain_id)` | Observed / reference sequence |
 | `set_reference_sequence(chain_id, sequence, remap=True)` | Replace one reference |
 | `set_reference_sequences(sequences, remap=True)` | Replace several references from `{chain: seq}` |
@@ -187,6 +187,7 @@ Attributes: `structure`, `model`, `structure_id`, `file_format`, `mmcif_dict`, `
 | `match_chains(sequence, min_identity=90.0)` | Find chains matching a sequence |
 | `rename_chains(mapping)` / `rename_by_sequence(targets, min_identity=90.0)` | Rename chains and keep the mapping in sync |
 | `chain_contact_partners(cutoff=..., moieties=...)` | `{chain: [partners]}` |
+| `subset(chain_ids, structure_id=None)` | New `SyncedStructure` with only those chains; references, IDs and metadata are kept and the parent is unchanged |
 
 ### Alignment
 
@@ -218,7 +219,7 @@ contact_statistics(cutoff=..., moieties=..., scheme="ca")   # dict: pairs, profi
 
 ### Interfaces
 
-`interface(a, b)`, `interface_all(chain_pairs=None)`, `interface_complex(a, b)`, `interface_residues(a, b)`, `chain_partner_interfaces(chain_id, cutoff=...)` and `chain_partner_frame(chain_id, cutoff=..., level="complex")`. The scalar metrics `buried_area`, `initial_sasa`, `buried_fraction`, `contact_count`, `min_distance` and `contact_score`, and `interface_partner_labels`, all take `(chain_a="A", chain_b="B")`.
+`interface(a, b)`, `interface_all(chain_pairs=None)`, `interface_complex(a, b)`, `interface_residues(a, b)`, `chain_partner_interfaces(chain_id, cutoff=...)`, `chain_partner_frame(chain_id, cutoff=..., level="complex")` and `chain_partner_structures(chain_id, cutoff=..., moieties=...)`, which returns `{"{structure_id}_{chain}_{partner}": SyncedStructure}` with one two-chain structure per contact partner. The scalar metrics `buried_area`, `initial_sasa`, `buried_fraction`, `contact_count`, `min_distance` and `contact_score`, and `interface_partner_labels`, all take `(chain_a="A", chain_b="B")`.
 
 ### Visualization
 

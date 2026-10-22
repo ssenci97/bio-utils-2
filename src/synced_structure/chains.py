@@ -340,6 +340,26 @@ class ChainMixin:
         self._interface_cache.clear()
         return self
 
+    def subset(self, chain_ids, structure_id=None):
+        """Return a new SyncedStructure holding only the given chains, with their references, IDs, and metadata kept.
+
+        The parent is not changed. The mmCIF dict and aligners are shared with the parent, not copied.
+
+        Args:
+            chain_ids: Chain identifiers to keep, standard or author.
+            structure_id: ID of the new structure, or None for '{structure_id}_{key}_{key}...'.
+        """
+        keep = [self._require_chain(chain_id) for chain_id in chain_ids]
+        if not keep:
+            raise ValueError("subset needs at least one chain.")
+        shared = (self.mmcif_dict, self._global_aligner, self._local_aligner)
+        child = copy.deepcopy(self, memo={id(obj): obj for obj in shared})
+        for key in self.chains:
+            if key not in keep:
+                child.remove_chain(key)
+        child.structure_id = str(structure_id or "_".join([self.structure_id, *dict.fromkeys(keep)]))
+        return child
+
     def replace_chain(self, chain_id, chain, reference_sequence=None, entity_id=None, metadata=None):
         """Replace a chain with a new Biopython chain and return self.
 
@@ -529,12 +549,18 @@ class ChainMixin:
 
 ###################################### SUMMARY
 
-    def summary(self):
+    def summary(self, partners=False, cutoff=CONTACTS_CUTOFF_NM, moieties=DEFAULT_CONTACT_MOIETIES):
         """Return a summary DataFrame with standard and author chain IDs, entity, polymer moiety, description, external reference, reference sequence ID, and mapping coverage.
 
         The moiety column names the biomolecule types of the chain's polymer residues, joined with '+' when mixed,
         or of its other residues when it has no polymer.
+
+        Args:
+            partners: If True, add a 'partners' column of ';'-joined contact partner keys; this computes contacts.
+            cutoff: Contact cutoff in nm, used only with partners=True.
+            moieties: Biomolecule types whose contact points are compared, used only with partners=True.
         """
+        contacts = self.chain_contact_partners(cutoff=cutoff, moieties=moieties) if partners else None
         descriptions = self._entity_descriptions()
         rows = []
         for key, data in self.chains.items():
@@ -553,4 +579,6 @@ class ChainMixin:
                 "mapped_residues": data.mapped_residues,
                 "mapping_fraction": round(data.mapped_residues / length, 3) if length else 0.0,
             })
+            if contacts is not None:
+                rows[-1]["partners"] = ";".join(contacts.get(key, []))
         return pd.DataFrame(rows)
