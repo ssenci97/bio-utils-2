@@ -714,7 +714,7 @@ class ChainMixin(StructureState):
 
     def chain_table(self, partners: bool = False, cutoff: float = CONTACTS_CUTOFF_NM,
                       moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> pd.DataFrame:
-        """Summarize every chain: IDs, entity, polymer moiety, description, references, and mapping coverage.
+        """Summarize every chain: structure and chain IDs, entity, polymer moiety, description, references, and mapping coverage.
 
         The moiety column names the polymer type, 'protein' or 'nucleic' ('+'-joined when mixed), or 'other' when
         the chain has no polymer; ligands, ions, and water are counted only in moiety_table.
@@ -734,6 +734,7 @@ class ChainMixin(StructureState):
             length = data.sequence_length
             present = set(data.moieties)
             row: dict[str, Any] = {
+                "structure_id": self.structure_id,
                 "chain_id": data.chain_id,
                 "auth_chain_id": data.auth_chain_id,
                 "entity_id": data.entity_id,

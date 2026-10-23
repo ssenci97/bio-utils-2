@@ -7,6 +7,7 @@ instead, so the test is offline. docs/index.html must equal what docs/build_docs
 
 import importlib.util
 import re
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -76,6 +77,7 @@ def test_relative_links_resolve():
 def _build_docs():
     spec = importlib.util.spec_from_file_location("build_docs", ROOT / "docs" / "build_docs.py")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 

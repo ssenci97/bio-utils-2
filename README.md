@@ -51,7 +51,7 @@ from synced_structure import SyncedStructure
 s = SyncedStructure.from_rcsb("1AAY")          # download Zif268 zinc fingers bound to DNA
 # s = SyncedStructure.from_path("model.cif")   # or load a local .pdb / .cif / .mmcif file
 
-chains = s.chain_table()                       # one row per chain: both IDs, entity, references, coverage
+chains = s.chain_table()                       # one row per chain: structure and chain IDs, entity, references, coverage
 residues = s.chain_residue_table("A")          # author number ↔ observed index ↔ reference index
 contacts = s.contact_table(cutoff=0.8)         # inter-chain residue pairs closer than 0.8 nm
 metrics = s.interface_complex("A", "B")        # buried area (Å²) and other interface metrics

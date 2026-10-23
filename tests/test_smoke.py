@@ -24,6 +24,7 @@ def test_chains_and_moieties(sync):
     assert set(sync.moiety_table["moiety"]) == {"protein", "nucleic", "other"}
     assert sync.chain_ids_by_moiety("nucleic") == ["A", "B"]
     summary = sync.chain_table()
+    assert summary.columns[0] == "structure_id" and summary["structure_id"].eq(sync.structure_id).all()
     assert summary["mapping_fraction"].eq(1.0).all()
     assert dict(zip(summary["chain_id"], summary["moiety"])) == {"B": "nucleic", "C": "protein", "A": "nucleic"}
     polymer = sync.moiety_table.query("moiety != 'other'").groupby("chain_id")["moiety"].agg("+".join)
