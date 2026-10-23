@@ -49,7 +49,17 @@ def test_contacts_and_strings(sync, tmp_path):
     contacts = sync.contact_table(contact_type="inter", moieties=("protein", "nucleic", "other"))
     assert {"protein", "nucleic"} <= set(contacts["moiety_1"]) | set(contacts["moiety_2"])
     assert contacts.loc[contacts["moiety_2"] == "other", "sequence_index_2"].isna().all()
-    assert "1" in sync.contact_string("B")
+    text = sync.contact_string("B")
+    assert "1" in text
+    masked = sync.masked_sequence("B")
+    assert len(masked) == len(text)
+    assert all((char != "-") == (bit == "1") for char, bit in zip(masked, text))
+    assert sync.masked_sequence("B", mask=".").replace(".", "") == masked.replace("-", "")
+    with pytest.raises(ValueError):
+        sync.masked_sequence("B", mask="--")
+    reference = sync.reference_masked_sequence("B")
+    assert len(reference) == len(sync.get_reference_sequence("B"))
+    assert all(char in ("-", ref) for char, ref in zip(reference, sync.get_reference_sequence("B")))
     path = sync.export_contact_strings(tmp_path / "out" / "strings.tsv", reference=True)
     assert path.is_file()
     assert "\t" in path.read_text().splitlines()[0]

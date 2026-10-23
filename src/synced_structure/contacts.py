@@ -86,6 +86,25 @@ def _pair_mask(same_chain: np.ndarray, contact_type: str) -> np.ndarray:
         return np.ones_like(same_chain, dtype=bool)
     return same_chain if contact_type == "intra" else ~same_chain
 
+
+def _masked(sequence: str, contacts: str, mask: str) -> str:
+    """Keep the residues in contact and replace every other position with mask.
+
+    Args:
+        sequence: Sequence aligned with contacts.
+        contacts: Contact string of X, 0, and 1.
+        mask: Single replacement character.
+
+    Returns:
+        The masked sequence, as long as sequence.
+
+    Raises:
+        ValueError: If mask is not one character.
+    """
+    if len(mask) != 1:
+        raise ValueError("mask must be a single character.")
+    return "".join(residue if bit == "1" else mask for residue, bit in zip(sequence, contacts, strict=True))
+
 ###################################### CONTACT POINTS AND TRAJECTORY
 
 
@@ -246,6 +265,19 @@ class ContactMixin(StructureState):
         """
         return [index for index, moiety in enumerate(self.chains[chain_id].moieties) if moiety in moieties]
 
+    def _moiety_sequence(self, chain_id: str, moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> str:
+        """Return the observed residues of a chain whose moiety is in moieties.
+
+        Args:
+            chain_id: Chain key.
+            moieties: Biomolecule types to keep.
+
+        Returns:
+            The filtered observed sequence.
+        """
+        sequence = self.chains[chain_id].sequence
+        return "".join(sequence[index] for index in self._moiety_indices(chain_id, moieties))
+
     def _contact_bits(self, chain_id: str, cutoff: float, contact_type: str, contacts: pd.DataFrame | None,
                       scheme: str, moieties: Moieties) -> list[str]:
         """Mark each polymer residue of a chain as X (no contact point), 0, or 1.
@@ -331,6 +363,54 @@ class ContactMixin(StructureState):
                 bits[ref_index] = "1" if observed[seq_index] == "1" else "0"
         return "".join(bits)
 
+    def masked_sequence(self, chain_id: str, cutoff: float = CONTACTS_CUTOFF_NM,
+                        contact_type: str = DEFAULT_CONTACT_TYPE, contacts: pd.DataFrame | None = None,
+                        scheme: str = "ca", moieties: Moieties = DEFAULT_CONTACT_MOIETIES, mask: str = "-") -> str:
+        """Return the observed sequence with every residue not in contact replaced by mask.
+
+        The result is aligned with contact_string: '1' positions keep their residue, '0' and 'X' become mask.
+
+        Args:
+            chain_id: Chain identifier.
+            cutoff: Distance cutoff in nm, used if contacts is None.
+            contact_type: Contact type, used if contacts is None.
+            contacts: Precomputed contacts table, or None.
+            scheme: Contact scheme, used if contacts is None.
+            moieties: Biomolecule types included in the sequence.
+            mask: Single replacement character.
+
+        Returns:
+            The masked observed sequence.
+        """
+        chain_id = self._chain_key(chain_id)
+        text = self.contact_string(chain_id, cutoff, contact_type, contacts, scheme, moieties)
+        return _masked(self._moiety_sequence(chain_id, moieties), text, mask)
+
+    def reference_masked_sequence(self, chain_id: str, cutoff: float = CONTACTS_CUTOFF_NM,
+                                  contact_type: str = DEFAULT_CONTACT_TYPE, contacts: pd.DataFrame | None = None,
+                                  scheme: str = "ca", moieties: Moieties = DEFAULT_CONTACT_MOIETIES,
+                                  mask: str = "-") -> str:
+        """Return the reference sequence with every residue not in contact replaced by mask.
+
+        The result is aligned with reference_contact_string: '1' positions keep their residue, '0' and 'X'
+        become mask.
+
+        Args:
+            chain_id: Chain identifier.
+            cutoff: Distance cutoff in nm, used if contacts is None.
+            contact_type: Contact type, used if contacts is None.
+            contacts: Precomputed contacts table, or None.
+            scheme: Contact scheme, used if contacts is None.
+            moieties: Biomolecule types included in the sequence.
+            mask: Single replacement character.
+
+        Returns:
+            The masked reference sequence.
+        """
+        chain_id = self._chain_key(chain_id)
+        text = self.reference_contact_string(chain_id, cutoff, contact_type, contacts, scheme, moieties)
+        return _masked(self.chains[chain_id].reference_sequence, text, mask)
+
     def export_contact_strings(self, output_path: PathLike, cutoff: float = CONTACTS_CUTOFF_NM,
                                contact_type: str = DEFAULT_CONTACT_TYPE, reference: bool = False,
                                scheme: str = "ca", moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> Path:
@@ -358,7 +438,7 @@ class ContactMixin(StructureState):
                 sequence = data.reference_sequence
                 text = self.reference_contact_string(chain_key, **options)
             else:
-                sequence = "".join(data.sequence[index] for index in self._moiety_indices(chain_key, moieties))
+                sequence = self._moiety_sequence(chain_key, moieties)
                 text = self.contact_string(chain_key, **options)
             rows.append({
                 "structure_id": self.structure_id,
