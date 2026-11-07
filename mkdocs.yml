@@ -15,6 +15,14 @@ nav:
       - Conventions: guide/conventions.md
       - Configuration: guide/configuration.md
       - HADDOCK3 docking: guide/docking.md
+  - Tutorials:
+      - HADDOCK3 docking:
+          - tutorials/haddock/index.md
+          - 1. Re-dock a complex: tutorials/haddock/01-redock-a-complex.md
+          - 2. Restraints: tutorials/haddock/02-restraints.md
+          - 3. Different structures: tutorials/haddock/03-different-structures.md
+          - 4. Workflow and parameters: tutorials/haddock/04-workflow-and-parameters.md
+          - 5. Analyse the results: tutorials/haddock/05-analyse-results.md
   - API reference:
       - reference/index.md
       - Structure and loading: reference/structure.md

@@ -67,12 +67,12 @@ mkdocs serve                       # live preview at http://127.0.0.1:8000
 mkdocs build --strict              # what the tests run; fails on any warning
 ```
 
-- `README.md` holds the pitch, a short install and the quick start. Pages under `docs/` hold the rest: `quickstart.md`, `guide/*.md` (concepts, conventions, configuration, docking) and `reference/*.md` (API).
+- `README.md` holds the pitch, a short install and the quick start. Pages under `docs/` hold the rest: `quickstart.md`, `guide/*.md` (concepts, conventions, configuration, docking), `tutorials/haddock/*.md` (HADDOCK3 tutorials) and `reference/*.md` (API).
 - The API reference is generated from signatures and docstrings. Each `reference/*.md` page lists the `SyncedStructure` members of one area under `members:`. A new public method must be added to one of these lists; `tests/test_docs.py` fails until it is.
-- Python blocks in the README and in `docs/index.md`, `docs/quickstart.md` and `docs/guide/*.md` run in `tests/test_docs.py` (one namespace per page, with `from_rcsb` served from `tests/data`). Mark a block that must not run with `<!-- skip-test -->` on the line before it.
+- Python blocks in the README and in `docs/index.md`, `docs/quickstart.md`, `docs/guide/*.md` and `docs/tutorials/**/*.md` run in `tests/test_docs.py` (one namespace per page, with `from_rcsb` served from `tests/data`). Mark a block that must not run with `<!-- skip-test -->` on the line before it.
 
 ## Releasing
 
-1. `pytest -m ""` passes, and `python examples/export_all.py` and `python examples/dock_1kxp.py` run.
+1. `pytest -m ""` passes, and `python examples/export_all.py` `python examples/dock_1kxp.py` and `python examples/dock_barnase_barstar.py` run.
 2. Update `CHANGELOG.md` and the version in `pyproject.toml` and `src/synced_structure/__init__.py`.
 3. Commit, then tag: `git tag v0.1.0 && git push --tags`.

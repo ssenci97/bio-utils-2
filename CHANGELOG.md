@@ -3,7 +3,22 @@
 ## Unreleased
 
 ### Added
+- HADDOCK3 partners from different structures: `HaddockDocking.set_reference(complex, chain_map=...)` names a complex
+  (for example the holo complex of two apo partners) that caprieval compares models with, written to
+  `inputs/reference.pdb` in the partners' segment IDs and HADDOCK3 numbering, and that `add_contact_restraints()` reads
+  contacts from by default, so `oracle` works on mixed partners. `reference=` also accepts a `SyncedStructure`.
+- `HaddockDocking.plot_caprieval(x="irmsd", y="score", color="dockq")`: a scatter plot of caprieval metrics, returning
+  `(fig, ax)`.
+- `examples/dock_barnase_barstar.py`: docking of unbound barnase (1A2P) and barstar (1A19), evaluated against the complex
+  (1BRS). `examples/dock_1kxp.py` also saves the caprieval plot.
 - `run_haddock` logs progress: module starts and finishes, models written so far with the time left, and stops haddock3 when Python is interrupted. `progress=False` turns it off.
+
+### Changed: HADDOCK3 partners
+- Residues transferred between structures (contacts from `source=`, the reference complex) are matched through a
+  global alignment of the two reference sequences when they differ (tags, truncations, mutants), instead of assuming
+  equal reference positions. A log line gives the identity of each aligned pair.
+- `separate="auto"` also moves partners apart when they come from different structures but touch (heavy atoms within
+  `clearance_a`), as superposed models or models centred at the origin do.
 
 ### Changed: HADDOCK3 presets
 - Every preset clusters the rigid-body models and refines only the best clusters: `clustfcc` → `seletopclusts` (the top fifth of the clusters, at least 5, 4 models each) → `emref` → `caprieval`. Before, `oracle` and `eval` refined all 200 rigid-body models and `ab-initio` refined the top 200 before clustering.
@@ -12,6 +27,8 @@
 ### Documentation
 - A documentation site built with MkDocs, Material and mkdocstrings: installation, a quick start, guides (concepts, conventions, configuration, HADDOCK3 docking) and an API reference organised by pipeline step. It replaces `docs/index.html` and `docs/build_docs.py`.
 - `examples/dock_1kxp.py`: a HADDOCK3 re-docking of actin and vitamin D-binding protein (1KXP), compared with the crystal.
+- HADDOCK3 tutorials (`docs/tutorials/haddock/`): re-docking a complex, restraints, partners from different
+  structures, workflow and parameters, and analysis of the results. Their code blocks run in the tests.
 - The guide code blocks run in the tests, like the README's, and `mkdocs build --strict` is part of the test suite.
 
 ### Fixed

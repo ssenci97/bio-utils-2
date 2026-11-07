@@ -179,5 +179,8 @@ HADDOCK_RESTRAINT_COLUMNS = [
 ]
 HADDOCK_PATCH_COLUMNS = ["patch", "segid_a", "chain_a", "residues_a", "segid_b", "chain_b", "residues_b", "n_pairs"]
 HADDOCK_ANALYSE_EXECUTABLE = "haddock3-analyse"
+# axis labels of caprieval columns in HaddockDocking.plot_caprieval; other columns are labelled by name
+CAPRI_LABELS = {"score": "HADDOCK score", "irmsd": "i-RMSD (Å)", "lrmsd": "l-RMSD (Å)", "ilrmsd": "il-RMSD (Å)",
+                "fnat": "Fnat", "dockq": "DockQ", "caprieval_rank": "Rank"}
 HADDOCK_SCORE_COLUMNS = ["step", "model", "path", "score", "cluster_id", "cluster_rank", "model_cluster_rank",
                          "origin", "seed"]

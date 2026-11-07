@@ -23,7 +23,8 @@ from synced_structure import SyncedStructure  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(__file__).parent / "data"
 DOCS = ROOT / "docs"
-GUIDES = [ROOT / "README.md", DOCS / "index.md", DOCS / "quickstart.md", *sorted((DOCS / "guide").glob("*.md"))]
+GUIDES = [ROOT / "README.md", DOCS / "index.md", DOCS / "quickstart.md", *sorted((DOCS / "guide").glob("*.md")),
+          *sorted((DOCS / "tutorials").rglob("*.md"))]
 PAGES = [ROOT / "README.md", ROOT / "CHANGELOG.md", *sorted(DOCS.rglob("*.md"))]
 DIRECTIVE = re.compile(r"^::: (synced_structure\.[\w.]+)", re.M)
 BLOCK = re.compile(r"(<!-- skip-test -->\s*)?```python\n(.*?)```", re.S)

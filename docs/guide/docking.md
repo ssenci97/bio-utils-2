@@ -4,7 +4,9 @@
 
 ## 1. Prepare
 
-Each positional argument is one **partner** (rigid body): one chain, a list of chains, or `(structure, chains)` for a chain of another structure.
+Each positional argument is one **partner** (rigid body): one chain, a list of chains, or `(structure, chains)` for a chain of another structure. Partners can come from different PDB entries or models. Their residues are matched through reference positions, and `set_reference(complex, chain_map=...)` names a complex to take contact restraints from and to evaluate against ([tutorial](../tutorials/haddock/03-different-structures.md)).
+
+The [HADDOCK3 tutorials](../tutorials/haddock/index.md) go through every step in detail.
 
 ```python
 from synced_structure import SyncedStructure
@@ -22,7 +24,7 @@ dock.residue_table().head()          # partner, segid, haddock_resid ↔ chain_k
 
 Every method then clusters the rigid-body models (`clustfcc`), keeps the best fifth of the clusters (at least 5, or all when there are fewer) with 4 models each (`seletopclusts`), and refines only those (`emref`). It ends with `caprieval`, against the reference when there is one and otherwise against the best-scoring model. The number of clusters is known only after clustering, so `run_haddock` runs haddock3 up to `clustfcc`, counts the clusters, and restarts the run from `seletopclusts`. Setting `module_params={"seletopclusts": {"top_clusters": 10}}` fixes the number and runs haddock3 once.
 
-Partners that come from the same structure are moved apart with random rotations (`separate="auto"`), so the docking does not start from the answer. Override the preset of any module with `module_params={"rigidbody": {"sampling": 1000}}`.
+Partners that come from the same structure, or that touch, are moved apart with random rotations (`separate="auto"`), so the docking does not start from the answer. Override the preset of any module with `module_params={"rigidbody": {"sampling": 1000}}`.
 
 ## 2. Add restraints
 
@@ -62,6 +64,7 @@ HADDOCK3 [2/5] rigidbody finished in 25m53s
 ```python
 scores = dock.score_table()                  # every model of the last step, best first
 final = dock.docked_model_table()            # final models with caprieval metrics, if caprieval ran
+fig, ax = dock.plot_caprieval()              # HADDOCK score vs i-RMSD, colored by DockQ
 models = dock.load_docked_models(top=5)      # {name: SyncedStructure} with your chain keys and residue IDs
 best = dock.load_docked_model(0)
 best.interface_complex("A", "B")             # analyse it like any other structure

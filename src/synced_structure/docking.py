@@ -26,6 +26,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, TypedDict, cast
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from Bio.PDB import PDBParser
@@ -39,7 +40,7 @@ from ._types import ChainRef, PathLike, Record, Self
 from .base import StructureState
 from .chains import ChainMixin
 from .constants import (
-    CONTACTS_CUTOFF_NM, EXPORT_SEP, HADDOCK_ANALYSE_EXECUTABLE, HADDOCK_CHAIN_GAP, HADDOCK_CLEARANCE_A,
+    CAPRI_LABELS, CONTACTS_CUTOFF_NM, EXPORT_SEP, HADDOCK_ANALYSE_EXECUTABLE, HADDOCK_CHAIN_GAP, HADDOCK_CLEARANCE_A,
     HADDOCK_DEFAULT_SEED, HADDOCK_EXECUTABLE, HADDOCK_MAX_RESID, HADDOCK_METHODS, HADDOCK_NUMBERINGS,
     HADDOCK_DEFAULT_SAMPLING, HADDOCK_DEFAULT_SELECT, HADDOCK_DEFAULT_TOP_MODELS, HADDOCK_MIN_TOP_CLUSTERS,
     HADDOCK_PATCH_COLUMNS, HADDOCK_PATCH_GAP,
@@ -48,10 +49,18 @@ from .constants import (
     HADDOCK_RESTRAINT_KINDS, HADDOCK_RESTRAINT_MODULES, HADDOCK_SCORE_COLUMNS, HADDOCK_SEEDED_MODULES, HADDOCK_SEGIDS,
     HADDOCK_TBL_TERMS_PER_LINE, HADDOCK_TOP_CLUSTER_FRACTION, POLYMER_MOIETIES,
 )
+from .alignment import make_global_aligner
+from .plot_style import (
+    CAPRI_ALPHA, CAPRI_AXIS_COLOR, CAPRI_CMAP, CAPRI_EDGE_COLOR, CAPRI_GRID_COLOR, CAPRI_LABEL_PT, CAPRI_MARKER_COLOR,
+    CAPRI_MARKER_SIZE, CAPRI_SIZE_IN, CAPRI_TEXT_COLOR, CAPRI_TICK_PT, CAPRI_TITLE_PT,
+)
 from .residues import is_heavy_atom
 from .utils import log_completion, log_info
 
 if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure, SubFigure
+
     from .structure import SyncedStructure
 
 RUN_SENTINEL = ".synced_structure_run"
@@ -64,6 +73,8 @@ REMARK_TERMS = {"Desolvation energy": "desolv", "buried surface area": "bsa"}
 PartnerSpec = tuple["_structure.SyncedStructure", str | Sequence[str]]
 ChainSpec = ChainRef | tuple[int, ChainRef]
 ChainTarget = tuple[int, str]
+# a reference given as a structure: the complex and {source chain key: (partner index, chain key)}
+ReferenceSource = tuple["_structure.SyncedStructure", dict[str, ChainTarget]]
 PatchPair = tuple[tuple[ChainSpec, Iterable[int]], tuple[ChainSpec, Iterable[int]]]
 StepRef = str | int
 
@@ -501,6 +512,8 @@ class HaddockDocking:
     separated: bool
     placements: dict[int, Placement]
     _reference: PathLike | None
+    _reference_source: ReferenceSource | None
+    _aligned_pairs: set[tuple[str, str, ChainTarget]]
     _restraints: list[Restraint]
     _patches: list[Record]
     _chains: dict[ChainTarget, list[ResidueEntry]]
@@ -509,9 +522,13 @@ class HaddockDocking:
     def __init__(self, partners: Iterable[PartnerSpec], workdir: PathLike, method: str = "ab-initio",
                  seed: int = HADDOCK_DEFAULT_SEED, ncores: int = 4, separate: str | bool = "auto",
                  clearance_a: float = HADDOCK_CLEARANCE_A, module_params: Mapping[str, Mapping[str, Any]] | None = None,
-                 global_params: Mapping[str, Any] | None = None, reference: PathLike | None = "auto",
-                 caprieval: bool = True, haddock3_exe: PathLike | None = None) -> None:
-        """Assign segment IDs and HADDOCK3 residue numbers, and place partners that share a structure ID apart.
+                 global_params: Mapping[str, Any] | None = None,
+                 reference: PathLike | SyncedStructure | None = "auto", caprieval: bool = True,
+                 haddock3_exe: PathLike | None = None) -> None:
+        """Assign segment IDs and HADDOCK3 residue numbers, and place partners apart that could start docked.
+
+        Partners may come from different structures. Their restraints, contacts, and reference complex are then
+        matched through reference positions; see set_reference().
 
         Args:
             partners: (SyncedStructure, chain or list of chains) pairs, one per rigid body.
@@ -519,11 +536,14 @@ class HaddockDocking:
             method: 'ab-initio', 'oracle', or 'targeted'.
             seed: Random seed, used as iniseed in every CNS module and for the placement of partners.
             ncores: Number of cores haddock3 may use.
-            separate: 'auto' moves partners apart when two share a structure ID; True or False forces it.
+            separate: 'auto' moves partners apart when two share a structure ID or touch (heavy atoms within
+                clearance_a); True or False forces it.
             clearance_a: Smallest gap in A between the bounding spheres of separated partners.
             module_params: {module: {parameter: value}} overriding the preset of each module.
             global_params: Top-level haddock3 parameters, such as mode or max_cpus.
-            reference: 'auto' (the input complex when all partners share a structure ID), a PDB path, or None.
+            reference: Reference complex for caprieval: 'auto' (the input complex when all partners share a
+                structure ID), a SyncedStructure (chains matched by key; use set_reference() for a chain map), a PDB
+                path already in partner segment IDs and HADDOCK3 numbering, or None.
             caprieval: Whether to end with caprieval, against the reference or, without one, the best-scoring model.
             haddock3_exe: Path to the haddock3 executable, or None to search the PATH and this Python's bin directory.
 
@@ -543,16 +563,18 @@ class HaddockDocking:
         self.global_params = dict(global_params or {})
         self.caprieval = bool(caprieval)
         self.haddock3_exe = haddock3_exe
-        self._reference = reference
+        self._reference = "auto"
+        self._reference_source = None
+        self._aligned_pairs = set()
         self._restraints = []
         self._patches = []
         self._top_clusters = None
         self.partners = self._normalize_partners(partners)
         self._chains = self._assign_numbering()
-        structure_ids = [partner["structure"].structure_id for partner in self.partners]
-        self.separated = (len(set(structure_ids)) < len(structure_ids)) if separate == "auto" else bool(separate)
+        self.separated = self._partners_overlap() if separate == "auto" else bool(separate)
         self.placements = self._place_partners() if self.separated else {}
         self._check_overrides()
+        self.set_reference(reference)
 
 ###################################### PARTNERS AND NUMBERING
 
@@ -654,6 +676,23 @@ class HaddockDocking:
         if placement is None:
             return coords
         return (coords - placement["origin"]) @ placement["rotation"].T + placement["center"]
+
+    def _partners_overlap(self) -> bool:
+        """Return whether two partners share a structure ID or have heavy atoms within clearance_a.
+
+        Returns:
+            Whether the partners should be moved apart.
+        """
+        structure_ids = [partner["structure"].structure_id for partner in self.partners]
+        if len(set(structure_ids)) < len(structure_ids):
+            return True
+        coords = [self._partner_coords(index) for index in range(len(self.partners))]
+        for i, j in itertools.combinations(range(len(coords)), 2):
+            if ChainMixin._coords_touch(coords[i], coords[j], self.clearance_a):
+                log_info(f"HADDOCK3: partners {self.partners[i]['segid']} and {self.partners[j]['segid']} come from "
+                         f"different structures but touch; moving them apart.")
+                return True
+        return False
 
     def _place_partners(self) -> dict[int, Placement]:
         """Place every partner after the first apart from the others, keeping the first in place.
@@ -929,28 +968,36 @@ class HaddockDocking:
         return self
 
     def _contact_source(self, source: SyncedStructure | None,
-                        chain_map: Mapping[ChainSpec, str] | None) -> tuple[SyncedStructure, dict[str, ChainTarget]]:
+                        chain_map: Mapping[ChainSpec, str] | None) -> ReferenceSource:
         """Resolve the structure to read contacts from and how its chains map onto partner chains.
 
         Args:
-            source: Structure to read contacts from, or None for the partners' own structure.
+            source: Structure to read contacts from; None for the reference set with set_reference(), or else the
+                partners' own structure.
             chain_map: {partner chain: source chain}, or None to match chain keys.
 
         Returns:
             (source structure, {source chain key: (partner index, chain key)}).
 
         Raises:
-            ValueError: If the default source is ambiguous or the source holds fewer than two partners.
+            ValueError: If the default source is ambiguous, chain keys match ambiguously, or the source holds fewer
+                than two partners.
         """
+        if source is None and self._reference_source is not None and chain_map is None:
+            return self._reference_source
         if source is None:
             structures = {id(partner["structure"]) for partner in self.partners}
             if len(structures) > 1:
-                raise ValueError("Partners come from different structures; pass source= with the complex to read "
-                                 "contacts from, and chain_map= if its chains differ.")
+                raise ValueError("Partners come from different structures; call set_reference() with the complex, "
+                                 "or pass source= (and chain_map= if its chains differ).")
             source = self.partners[0]["structure"]
         if chain_map is None:
-            resolved = {key: (index, key) for index, partner in enumerate(self.partners)
-                        for key in partner["keys"] if key in source}
+            matched = [(key, (index, key)) for index, partner in enumerate(self.partners)
+                       for key in partner["keys"] if key in source]
+            if len({key for key, _ in matched}) < len(matched):
+                raise ValueError("Several partners have a chain with the same key; pass chain_map= with "
+                                 "(partner number, chain) keys.")
+            resolved = dict(matched)
         else:
             resolved = {source._chain_key(source_chain): self._locate_chain(chain)
                         for chain, source_chain in chain_map.items()}
@@ -958,30 +1005,47 @@ class HaddockDocking:
             raise ValueError("The source structure must hold chains of at least two partners.")
         return source, resolved
 
-    def _transfer_index(self, source: SyncedStructure, source_key: str, seq_index: int,
-                        target: ChainTarget) -> int | None:
-        """Map a source residue onto a partner chain.
+    def _position_map(self, source: SyncedStructure, source_key: str, target: ChainTarget) -> dict[int, int]:
+        """Map the residues of a source chain onto a partner chain.
 
-        A chain of a partner's own structure maps directly; any other chain maps through reference positions.
+        A chain of a partner's own structure maps onto itself. Any other chain maps through reference positions; when
+        the two reference sequences differ (tags, truncations, mutations), through a global alignment of them.
 
         Args:
-            source: Structure the residue comes from.
+            source: Structure holding the source chain.
             source_key: Chain key in the source.
-            seq_index: 0-based sequence index in the source chain.
             target: (partner index, chain key) to map onto.
 
         Returns:
-            0-based sequence index in the target chain, or None if it has no counterpart.
+            {0-based source sequence index: 0-based target sequence index}, for residues with a counterpart.
         """
         index, key = target
-        if source is self.partners[index]["structure"] and source_key == key:
-            return seq_index
-        reference_index = source.chains[source_key].sequence_index_to_ref_index.get(seq_index)
-        if reference_index is None:
-            return None
-        target_map = self.partners[index]["structure"].chains[key].sequence_index_to_ref_index
-        inverse = {ref: seq for seq, ref in target_map.items()}
-        return inverse.get(reference_index)
+        target_structure = self.partners[index]["structure"]
+        source_record, target_record = source.chains[source_key], target_structure.chains[key]
+        if source is target_structure and source_key == key:
+            return {seq: seq for seq in range(len(source_record.residues))}
+        source_ref, target_ref = source_record.reference_sequence, target_record.reference_sequence
+        if source_ref == target_ref:
+            ref_to_ref = {ref: ref for ref in range(len(source_ref))}
+        else:
+            blocks_a, blocks_b = make_global_aligner().align(source_ref, target_ref)[0].aligned
+            ref_to_ref = {start_a + offset: start_b + offset
+                          for (start_a, end_a), (start_b, _) in zip(blocks_a, blocks_b)
+                          for offset in range(end_a - start_a)}
+            same = sum(source_ref[a] == target_ref[b] for a, b in ref_to_ref.items())
+            pair = (str(source.structure_id), source_key, target)
+            if pair not in self._aligned_pairs:
+                self._aligned_pairs.add(pair)
+                log_info(f"HADDOCK3: reference sequences of {source.structure_id} chain {source_key} and "
+                         f"{target_structure.structure_id} chain {key} differ; matched by alignment "
+                         f"({same} identical of {len(target_ref)} positions).")
+        target_seq = {ref: seq for seq, ref in target_record.sequence_index_to_ref_index.items()}
+        mapping: dict[int, int] = {}
+        for seq, ref in source_record.sequence_index_to_ref_index.items():
+            mapped = target_seq.get(ref_to_ref.get(ref, -1))
+            if mapped is not None:
+                mapping[seq] = mapped
+        return mapping
 
     def partner_contact_map(self, cutoff: float = CONTACTS_CUTOFF_NM, scheme: str = "ca",
                               source: SyncedStructure | None = None, chain_map: Mapping[ChainSpec, str] | None = None,
@@ -993,7 +1057,8 @@ class HaddockDocking:
         Args:
             cutoff: Contact cutoff in nm.
             scheme: Contact scheme, 'ca' or 'sidechain'.
-            source: Structure to read contacts from, or None for the partners' own structure.
+            source: Structure to read contacts from; None for the reference set with set_reference(), or else the
+                partners' own structure.
             chain_map: {partner chain: source chain} when the source chains differ.
 
         Returns:
@@ -1002,6 +1067,7 @@ class HaddockDocking:
         source, resolved = self._contact_source(source, chain_map)
         contacts = source.contact_table(cutoff=cutoff, contact_type="inter", chain_ids=list(resolved),
                                            scheme=scheme, moieties=POLYMER_MOIETIES)
+        maps = {key: self._position_map(source, key, target) for key, target in resolved.items()}
         pairs: dict[tuple[ChainTarget, ChainTarget], list[tuple[int, int]]] = {}
         dropped = 0
         columns = (contacts[name].tolist() for name in ("chain_key_a", "sequence_index_a", "chain_key_b",
@@ -1011,8 +1077,7 @@ class HaddockDocking:
             target_1, target_2 = resolved[key_1], resolved[key_2]
             if target_1[0] == target_2[0]:
                 continue
-            mapped_1 = self._transfer_index(source, key_1, seq_1, target_1)
-            mapped_2 = self._transfer_index(source, key_2, seq_2, target_2)
+            mapped_1, mapped_2 = maps[key_1].get(seq_1), maps[key_2].get(seq_2)
             if mapped_1 is None or mapped_2 is None:
                 dropped += 1
                 continue
@@ -1038,8 +1103,8 @@ class HaddockDocking:
             kind: 'ambiguous' or 'unambiguous'.
             cutoff: Contact cutoff in nm.
             scheme: Contact scheme, 'ca' or 'sidechain'.
-            source: Structure to read contacts from, or None for the partners' own structure; another structure's
-                contacts are transferred through reference positions.
+            source: Structure to read contacts from; None for the reference set with set_reference(), or else the
+                partners' own structure. Another structure's contacts are transferred through reference positions.
             chain_map: {partner chain: source chain} when the source chains differ.
             patch_gap: Largest position difference that joins two contacts into one patch.
             distance: (distance, lower correction, upper correction) in A.
@@ -1240,6 +1305,54 @@ class HaddockDocking:
         if self.method == "targeted" and not any(item["origin"] == "patch_pair" for item in self._restraints):
             raise ValueError("The 'targeted' method needs patch couples; add them with add_patch_pair_restraints().")
 
+    def set_reference(self, reference: PathLike | SyncedStructure | None,
+                      chain_map: Mapping[ChainSpec, str] | None = None) -> Self:
+        """Set the reference complex that caprieval compares models with.
+
+        A SyncedStructure is written to inputs/reference.pdb in partner segment IDs and HADDOCK3 numbering, its
+        residues matched to the partner chains through reference positions, so it can be another entry than the
+        partners (for example the holo complex of two apo partners). It also becomes the default source of
+        add_contact_restraints().
+
+        Args:
+            reference: 'auto' (the input complex when all partners share a structure ID), a SyncedStructure, a PDB
+                path already in partner segment IDs and HADDOCK3 numbering, or None for no reference.
+            chain_map: {partner chain: reference chain} for a SyncedStructure, or None to match chain keys. Partner
+                chains are named as in restraints, such as 'A' or (2, 'A').
+
+        Returns:
+            self.
+        """
+        if isinstance(reference, _structure.SyncedStructure):
+            structure = reference
+            self._reference_source = self._contact_source(structure, chain_map)
+            self._reference = self.input_paths["reference"]
+            mapped = len(self._reference_rows())
+            total = sum(len(entries) for entries in self._chains.values())
+            log_info(f"HADDOCK3: reference {structure.structure_id} covers {mapped} of {total} partner residues.")
+        else:
+            self._reference_source = None
+            self._reference = reference
+        return self
+
+    def _reference_rows(self) -> list[tuple[int, ResidueEntry, Residue]]:
+        """Return the reference residue matched to each partner residue, for a reference set as a structure.
+
+        Returns:
+            (partner index, partner residue entry, reference residue) triples, in partner chain order.
+        """
+        if self._reference_source is None:
+            return []
+        source, resolved = self._reference_source
+        order = list(self._chains)
+        rows = []
+        for source_key, target in sorted(resolved.items(), key=lambda item: order.index(item[1])):
+            inverse = {seq: source_seq for source_seq, seq in self._position_map(source, source_key, target).items()}
+            residues = source.chains[source_key].residues
+            rows += [(target[0], entry, residues[inverse[entry["sequence_index"]]])
+                     for entry in self._chains[target] if entry["sequence_index"] in inverse]
+        return rows
+
     def _reference_path(self) -> Path | None:
         """Return the reference complex for caprieval and run_caprieval().
 
@@ -1256,7 +1369,7 @@ class HaddockDocking:
         if reference is None:
             return None
         path = Path(reference).expanduser().resolve()
-        if not path.is_file():
+        if self._reference_source is None and not path.is_file():
             raise FileNotFoundError(f"Reference structure not found: {path}")
         return path
 
@@ -1334,12 +1447,24 @@ class HaddockDocking:
 
 ###################################### WRITING
 
-    def _write_pdb(self, path: Path, partner_indices: Iterable[int], placed: bool) -> Path:
-        """Write the polymer heavy atoms of some partners to a PDB file.
+    def _partner_rows(self, partner_indices: Iterable[int]) -> list[tuple[int, ResidueEntry, Residue]]:
+        """Return the residues of some partners as written to their own PDB files.
+
+        Args:
+            partner_indices: Partners to include.
+
+        Returns:
+            (partner index, residue entry, residue) triples, in partner chain order.
+        """
+        return [(index, entry, entry["residue"]) for index in partner_indices
+                for key in self.partners[index]["keys"] for entry in self._chains[(index, key)]]
+
+    def _write_pdb(self, path: Path, rows: Sequence[tuple[int, ResidueEntry, Residue]], placed: bool) -> Path:
+        """Write the heavy atoms of residues to a PDB file, each under its partner's segment ID and HADDOCK3 number.
 
         Args:
             path: Output file.
-            partner_indices: Partners to write.
+            rows: (partner index, residue entry, residue to write) triples; a TER record ends each run of one chain.
             placed: Whether to apply each partner's placement.
 
         Returns:
@@ -1347,21 +1472,24 @@ class HaddockDocking:
         """
         lines = []
         serial = 1
-        for index in partner_indices:
-            partner = self.partners[index]
-            for key in partner["keys"]:
-                for entry in self._chains[(index, key)]:
-                    residue = entry["residue"]
-                    resname = residue.get_resname().strip().upper()
-                    for atom in residue.get_atoms():
-                        if not is_heavy_atom(atom):
-                            continue
-                        coord = atom.coord.astype(np.float64)
-                        if placed:
-                            coord = self._place_coords(index, coord[None])[0]
-                        lines.append(_pdb_atom_line(serial, atom, resname, partner["segid"], entry["resid"], coord))
-                        serial += 1
+        previous: tuple[int, int] | None = None
+        for index, entry, residue in rows:
+            chain = (index, id(entry["residue"].get_parent()))
+            if previous is not None and chain != previous:
                 lines.append("TER")
+            previous = chain
+            segid = self.partners[index]["segid"]
+            resname = residue.get_resname().strip().upper()
+            for atom in residue.get_atoms():
+                if not is_heavy_atom(atom):
+                    continue
+                coord = atom.coord.astype(np.float64)
+                if placed:
+                    coord = self._place_coords(index, coord[None])[0]
+                lines.append(_pdb_atom_line(serial, atom, resname, segid, entry["resid"], coord))
+                serial += 1
+        if previous is not None:
+            lines.append("TER")
         lines.append("END")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines) + "\n")
@@ -1397,9 +1525,11 @@ class HaddockDocking:
         paths = self.input_paths
         config = self.config_toml()
         for index, path in enumerate(paths["molecules"]):
-            self._write_pdb(path, [index], placed=True)
-        if self._reference == "auto" and self._reference_path() == paths["reference"]:
-            self._write_pdb(paths["reference"], range(len(self.partners)), placed=False)
+            self._write_pdb(path, self._partner_rows([index]), placed=True)
+        if self._reference_source is not None:
+            self._write_pdb(paths["reference"], self._reference_rows(), placed=False)
+        elif self._reference == "auto" and self._reference_path() == paths["reference"]:
+            self._write_pdb(paths["reference"], self._partner_rows(range(len(self.partners))), placed=False)
         for kind in HADDOCK_RESTRAINT_KINDS:
             text = self.restraint_text(kind)
             restraint_path = self._restraint_path(kind)
@@ -1885,6 +2015,69 @@ class HaddockDocking:
             raise FileNotFoundError(f"{folder.name} has no caprieval tables; "
                                     f"call run_caprieval(['{folder.name}']) first.")
         return self._read_capri_tables(analysed)
+
+    def plot_caprieval(self, x: str = "irmsd", y: str = "score", color: str | None = "dockq",
+                       step: StepRef | None = None, title: str | None = None,
+                       ax: Axes | None = None) -> tuple[Figure | SubFigure, Axes]:
+        """Plot two caprieval columns of the models against each other, colored by a third.
+
+        The default, HADDOCK score against i-RMSD colored by DockQ, shows whether the best-scoring models are also
+        the closest to the reference. Without a reference, caprieval measures models against the best-scoring
+        model, and the title says so.
+
+        Args:
+            x: Column on the x-axis, such as 'irmsd', 'lrmsd', 'fnat', or 'dockq'.
+            y: Column on the y-axis.
+            color: Column mapped to the colorbar, or None for one color.
+            step: Caprieval or analysed step, as in caprieval_tables(); None for the last caprieval step.
+            title: Plot title, or None for one naming the reference.
+            ax: Axes to draw into, or None for a new figure.
+
+        Returns:
+            (figure, axes).
+
+        Raises:
+            ValueError: If a column is missing or has no values.
+        """
+        models = self.caprieval_tables(step)["models"]
+        columns = [x, y] + ([color] if color else [])
+        for column in columns:
+            if column not in models or pd.to_numeric(models[column], errors="coerce").isna().all():
+                numeric = [name for name in models.columns
+                           if pd.to_numeric(models[name], errors="coerce").notna().any()]
+                raise ValueError(f"No values in caprieval column {column!r}; choose from {numeric}.")
+        values = models[columns].apply(pd.to_numeric, errors="coerce").dropna()
+        fig: Figure | SubFigure
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(CAPRI_SIZE_IN, CAPRI_SIZE_IN), facecolor="white")
+        else:
+            fig = ax.figure
+        ax.set_facecolor("white")
+        ax.grid(True, linestyle="--", alpha=0.3, color=CAPRI_GRID_COLOR)
+        ax.set_axisbelow(True)
+        if color:
+            points = ax.scatter(values[x], values[y], c=values[color], cmap=CAPRI_CMAP, s=CAPRI_MARKER_SIZE,
+                                edgecolors="none", alpha=CAPRI_ALPHA)
+            colorbar = fig.colorbar(points, ax=ax, pad=0.03, aspect=20)
+            colorbar.outline.set_visible(False)
+            colorbar.ax.tick_params(labelsize=CAPRI_TICK_PT - 1, colors=CAPRI_AXIS_COLOR)
+            colorbar.set_label(CAPRI_LABELS.get(color, color), fontsize=CAPRI_LABEL_PT - 1, color=CAPRI_TEXT_COLOR)
+        else:
+            ax.scatter(values[x], values[y], color=CAPRI_MARKER_COLOR, s=CAPRI_MARKER_SIZE, edgecolors="none",
+                       alpha=CAPRI_ALPHA)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(CAPRI_EDGE_COLOR)
+            ax.spines[side].set_linewidth(0.8)
+        ax.tick_params(colors=CAPRI_AXIS_COLOR, labelsize=CAPRI_TICK_PT)
+        ax.set_xlabel(CAPRI_LABELS.get(x, x), fontsize=CAPRI_LABEL_PT, color=CAPRI_TEXT_COLOR)
+        ax.set_ylabel(CAPRI_LABELS.get(y, y), fontsize=CAPRI_LABEL_PT, color=CAPRI_TEXT_COLOR)
+        if title is None:
+            reference = str(models["reference"].iloc[0]) if "reference" in models and len(models) else "best model"
+            title = f"Models vs {Path(reference).stem if reference != 'best model' else reference}"
+        ax.set_title(title, fontsize=CAPRI_TITLE_PT, fontweight="bold", pad=12)
+        return fig, ax
 
     def docked_model_table(self, step: StepRef | None = None) -> pd.DataFrame:
         """Return the final models, best first: caprieval metrics, HADDOCK score and energies, and model path.

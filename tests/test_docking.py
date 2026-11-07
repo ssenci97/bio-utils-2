@@ -16,7 +16,8 @@ from synced_structure import HaddockDocking, SyncedStructure
 from synced_structure.constants import HADDOCK_PRESETS, HADDOCK_SEEDED_MODULES
 from synced_structure.docking import cluster_contact_patches
 
-CIF = Path(__file__).parent / "data" / "1AAY.cif"
+DATA = Path(__file__).parent / "data"
+CIF = DATA / "1AAY.cif"
 LOW_THROUGHPUT = {"rigidbody": {"sampling": 8}, "clustfcc": {"min_population": 1}}
 
 
@@ -92,7 +93,12 @@ def test_same_structure_partners_are_separated(sync, setup, tmp_path):
 
 def test_separation_options(sync, tmp_path):
     assert not sync.prepare_haddock_docking("A", "B", workdir=tmp_path, separate=False).placements
+    touching = sync.subset_chains(["B", "C"])         # another structure ID, same coordinates: still moved apart
+    assert touching.structure_id != sync.structure_id
+    assert sync.prepare_haddock_docking("A", (touching, ["B", "C"]), workdir=tmp_path).separated
     apart = sync.subset_chains(["B", "C"])
+    for atom in apart.structure.get_atoms():
+        atom.coord = atom.coord + np.array([500.0, 0.0, 0.0], dtype=atom.coord.dtype)
     assert not sync.prepare_haddock_docking("A", (apart, ["B", "C"]), workdir=tmp_path).separated
     assert sync.prepare_haddock_docking("A", (apart, ["B", "C"]), workdir=tmp_path, separate=True).separated
 
@@ -195,6 +201,82 @@ def test_contacts_transfer_through_reference_positions(sync, tmp_path):
     shift = lambda residues: [resid - 102 for resid in residues]
     assert moved.restraint_table()["residues_a"].tolist() == [shift(r) for r in direct.restraint_table()["residues_a"]]
     assert moved.restraint_table()["residues_b"].tolist() == direct.restraint_table()["residues_b"].tolist()
+
+
+# partners from different structures: apo barnase (1A2P) and apo barstar (1A19), complex 1BRS (A barnase, D barstar)
+
+BARNASE_BARSTAR = {(1, "A"): "A", (2, "A"): "D"}
+
+
+@pytest.fixture
+def apo():
+    """Return apo barnase, apo barstar, and the barnase-barstar complex."""
+    return tuple(SyncedStructure.from_path(DATA / f"{pdb_id}.cif") for pdb_id in ("1A2P", "1A19", "1BRS"))
+
+
+def test_partners_from_different_structures(apo, tmp_path):
+    barnase, barstar, holo = apo
+    dock = HaddockDocking([(barnase, "A"), (barstar, "A")], tmp_path, method="oracle")
+    frame = dock.residue_table()
+    assert frame.groupby("segid")["structure_id"].unique().map(list).to_dict() == {"A": ["1A2P"], "B": ["1A19"]}
+    assert not dock.separated and dock._reference_path() is None
+    with pytest.raises(ValueError, match="several partners"):
+        dock._locate_chain("A")
+    with pytest.raises(ValueError, match="set_reference"):
+        dock.workflow_modules()                         # oracle needs contacts, and there is no complex to read
+    with pytest.raises(ValueError, match="chain_map"):
+        dock.set_reference(holo)                        # both partners have a chain 'A'
+
+
+def test_reference_structure_written_in_haddock_numbering(apo, tmp_path):
+    barnase, barstar, holo = apo
+    dock = HaddockDocking([(barnase, "A"), (barstar, "A")], tmp_path, method="oracle")
+    dock.set_reference(holo, chain_map=BARNASE_BARSTAR).export_inputs()
+    reference = dock.input_paths["reference"]
+    assert dock._caprieval_params()["reference_fname"] == str(reference)
+    parsed = PDBParser(QUIET=True).get_structure("ref", reference)[0]
+    assert sorted(chain.id for chain in parsed) == ["A", "B"]
+    rows = dock._reference_rows()
+    assert sum(1 for _ in parsed.get_residues()) == len(rows) > 190
+    written = {(chain.id, residue.id[1]) for chain in parsed for residue in chain}
+    assert written <= set(zip(dock.residue_table()["segid"], dock.residue_table()["haddock_resid"]))
+    # 1A19 barstar has an extra N-terminal Met and Cys40, 1BRS has Ala40: aligned, so the same residue lands on the same number
+    barstar_rows = {entry["resid"]: residue for index, entry, residue in rows if index == 1}
+    assert barstar_rows[40].get_resname() == "ALA" and barstar_rows[39].get_resname() == "ASP"
+    assert barstar_rows[38].id[1] == 38 and barstar_rows[38].get_resname() == barstar.chains["A"].residues[37].get_resname()
+
+
+def test_contacts_from_reference_structure(apo, tmp_path):
+    barnase, barstar, holo = apo
+    dock = HaddockDocking([(barnase, "A"), (barstar, "A")], tmp_path, method="oracle", reference=None)
+    dock.set_reference(holo, chain_map=BARNASE_BARSTAR)
+    modules = dict(dock.workflow_modules())             # oracle adds contact patches from the reference
+    assert "unambig_fname" in modules["rigidbody"] and len(dock.restraint_table()) > 0
+    explicit = HaddockDocking([(barnase, "A"), (barstar, "A")], tmp_path / "explicit")
+    explicit.add_contact_restraints(kind="unambiguous", source=holo, chain_map=BARNASE_BARSTAR)
+    assert explicit.restraint_table()["residues_b"].tolist() == dock.restraint_table()["residues_b"].tolist()
+    barstar_contacts = sorted({resid for resids in dock.restraint_table()["residues_b"] for resid in resids})
+    assert 35 in barstar_contacts                                  # Asp35 binds the barnase active site
+
+
+def test_contacts_transfer_across_different_reference_sequences(sync, tmp_path):
+    direct = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "direct")
+    direct.add_contact_restraints(kind="ambiguous")
+    tagged = SyncedStructure.from_path(CIF)
+    tagged.set_reference_sequence("A", "MGSSHHHHHH" + sync.chains["A"].reference_sequence)
+    moved = tagged.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "tagged")
+    moved.add_contact_restraints(kind="ambiguous", source=sync)
+    assert moved.restraint_table()["residues_a"].tolist() == direct.restraint_table()["residues_a"].tolist()
+
+
+def test_reference_path_and_constructor_structure(sync, tmp_path):
+    duplex = sync.subset_chains(["B", "C"])
+    dock = HaddockDocking([(sync, "A"), (duplex, ["B", "C"])], tmp_path, reference=sync)
+    assert dock._reference_path() == dock.input_paths["reference"]
+    dock.set_reference(None)
+    assert dock._reference_path() is None and "reference_fname" not in dock._caprieval_params()
+    with pytest.raises(FileNotFoundError):
+        dock.set_reference(tmp_path / "missing.pdb")._reference_path()
 
 
 def _validate(text):
@@ -479,6 +561,23 @@ def test_capri_tables_and_docked(finished, monkeypatch):
     assert list(loaded) == ["rigidbody_2"] and sorted(loaded["rigidbody_2"].chain_ids) == ["A", "B", "C"]
 
 
+def test_plot_caprieval(finished):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    fig, ax = finished.plot_caprieval()
+    assert len(ax.collections[0].get_offsets()) == 2
+    assert ax.get_xlabel() == "i-RMSD (Å)" and ax.get_ylabel() == "HADDOCK score"
+    assert fig.axes[-1].get_ylabel() == "DockQ" and ax.get_title() == "Models vs best model"
+    fig, ax = finished.plot_caprieval(x="fnat", y="dockq", color=None, title="t")
+    assert len(fig.axes) == 1 and ax.get_title() == "t"
+    with pytest.raises(ValueError, match="choose from"):
+        finished.plot_caprieval(x="cluster_id")
+    with pytest.raises(ValueError):
+        finished.plot_caprieval(color="nope")
+    matplotlib.pyplot.close("all")
+
+
 def test_docked_without_caprieval(finished, monkeypatch):
     monkeypatch.setattr(HaddockDocking, "_read_io_rows", lambda self, folder: None)
     shutil.rmtree(finished.run_dir / "2_caprieval")
@@ -564,3 +663,20 @@ def test_haddock_run_without_reference_still_scores(sync, tmp_path):
     setup.run_haddock()
     docked = setup.docked_model_table()
     assert docked["reference"].eq("best model").all() and docked["irmsd"].iloc[0] == 0
+
+
+@pytest.mark.haddock
+@needs_haddock
+def test_haddock_run_across_structures(apo, tmp_path):
+    barnase, barstar, holo = apo
+    setup = HaddockDocking([(barnase, "A"), (barstar, "A")], tmp_path, method="oracle", seed=11, ncores=2,
+                           module_params=LOW_THROUGHPUT)
+    setup.set_reference(holo, chain_map=BARNASE_BARSTAR)
+    setup.run_haddock()
+    models = setup.caprieval_tables()["models"]
+    assert models["reference"].eq("reference.pdb").all() and models["irmsd"].notna().all()
+    fig, _ = setup.plot_caprieval()
+    assert fig.axes[-1].get_ylabel() == "DockQ"
+    docked = setup.load_docked_model(0)
+    assert sorted(docked.chain_ids) == ["A", "AB"]                  # both partners had a chain 'A'
+    assert docked.chain_table()["mapping_fraction"].eq(1.0).all()

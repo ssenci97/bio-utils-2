@@ -48,4 +48,4 @@ A complete script that writes every table, contact map and a 3D page is in [`exa
 python examples/export_all.py      # writes to examples/output/
 ```
 
-[`examples/dock_1kxp.py`](examples/dock_1kxp.py) re-docks actin and vitamin D-binding protein (1KXP) with HADDOCK3 and compares the models with the crystal (needs the `haddock` extra; writes to `examples/output/docking_1KXP/`).
+[`examples/dock_1kxp.py`](examples/dock_1kxp.py) re-docks actin and vitamin D-binding protein (1KXP) with HADDOCK3 and compares the models with the crystal (needs the `haddock` extra; writes to `examples/output/docking_1KXP/`). [`examples/dock_barnase_barstar.py`](examples/dock_barnase_barstar.py) docks two unbound structures from different PDB entries and evaluates against their complex. The [HADDOCK3 tutorials](docs/tutorials/haddock/index.md) walk through docking step by step.
