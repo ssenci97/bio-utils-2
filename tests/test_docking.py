@@ -44,7 +44,7 @@ def _heavy_coords(structure, keys):
 # partners, numbering, and placement
 
 def test_segids_and_author_numbering(setup):
-    frame = setup.residue_table
+    frame = setup.residue_table()
     ranges = frame.groupby(["segid", "chain_key"])["haddock_resid"].agg(["min", "max", "count"])
     assert ranges.loc[("A", "A")].tolist() == [103, 187, 85]
     assert ranges.loc[("B", "B")].tolist() == [1, 11, 11]
@@ -54,9 +54,9 @@ def test_segids_and_author_numbering(setup):
 
 
 def test_partner_renumbered_when_author_numbers_collide(sync, tmp_path):
-    sync.renumber_chain("B", in_place=True)
-    sync.renumber_chain("C", in_place=True)
-    frame = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path).residue_table
+    sync.renumber_chain("B")
+    sync.renumber_chain("C")
+    frame = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path).residue_table()
     duplex = frame[frame["segid"] == "B"].groupby("chain_key")["haddock_resid"].agg(["min", "max"])
     assert duplex.loc["B"].tolist() == [1, 11]
     assert duplex.loc["C"].tolist() == [22, 32]
@@ -141,7 +141,7 @@ def test_restraints_need_two_partners(setup, sync, tmp_path):
     with pytest.raises(ValueError):
         pair.add_unambiguous_restraint("A", [3], "A", [3])
     pair.add_unambiguous_restraint((1, "A"), [3], (2, "A"), [3])
-    assert pair.restraint_table[["segid_a", "segid_b"]].iloc[0].tolist() == ["A", "B"]
+    assert pair.restraint_table()[["segid_a", "segid_b"]].iloc[0].tolist() == ["A", "B"]
     duplex = sync.subset_chains(["B", "C"])
     assert duplex["B"].chain_id == "A"
     keyed = sync.prepare_haddock_docking("A", (duplex, ["B", "C"]), workdir=tmp_path / "keyed")
@@ -150,12 +150,12 @@ def test_restraints_need_two_partners(setup, sync, tmp_path):
 
 def test_patch_pairs(setup):
     setup.add_patch_pair_restraints([(("A", [20, 23]), ("B", [3, 4])), (("A", [50]), ("C", [2]))])
-    table = setup.restraint_table
+    table = setup.restraint_table()
     assert table["kind"].eq("ambiguous").all() and table["origin"].eq("patch_pair").all()
     assert table["residues_a"].tolist() == [[120, 123], [150]]
     assert table["residues_b"].tolist() == [[3, 4], [52]]
     setup.add_patch_pair_restraints([(("A", [20]), ("B", [3]))], kind="unambiguous")
-    assert setup.restraint_table["kind"].iloc[-1] == "unambiguous"
+    assert setup.restraint_table()["kind"].iloc[-1] == "unambiguous"
     with pytest.raises(ValueError):
         setup.add_patch_pair_restraints([])
 
@@ -168,17 +168,17 @@ def test_cluster_patches():
 
 def test_contact_restraints(setup, sync):
     contacts = sync.contact_table(contact_type="inter", chain_ids=["A", "B", "C"])
-    protein = contacts[(contacts["auth_chain_1"] == "A") | (contacts["auth_chain_2"] == "A")]
+    protein = contacts[(contacts["auth_chain_a"] == "A") | (contacts["auth_chain_b"] == "A")]
     expected = set()
     for row in protein.itertuples():
-        side = 1 if row.auth_chain_1 == "A" else 2
+        side = "a" if row.auth_chain_a == "A" else "b"
         expected.add(getattr(row, f"resnum_{side}"))
     setup.add_contact_restraints(kind="ambiguous")
-    table = setup.restraint_table
+    table = setup.restraint_table()
     assert set().union(*table["residues_a"]) == expected
     setup.clear_restraints().add_contact_restraints(kind="unambiguous", scheme="sidechain", cutoff=0.45)
-    patches = setup.contact_patch_table
-    assert len(patches) == len(setup.restraint_table) and patches["n_pairs"].sum() > len(patches)
+    patches = setup.contact_patch_table()
+    assert len(patches) == len(setup.restraint_table()) and patches["n_pairs"].sum() > len(patches)
     assert set(patches["chain_b"]) == {"B", "C"}
 
 
@@ -186,14 +186,14 @@ def test_contacts_transfer_through_reference_positions(sync, tmp_path):
     direct = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "direct")
     direct.add_contact_restraints(kind="ambiguous")
     apo = SyncedStructure.from_path(CIF)
-    apo.renumber_chain("A", in_place=True)
+    apo.renumber_chain("A")
     moved = apo.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "moved")
     with pytest.raises(ValueError):
         HaddockDocking([(apo, "A"), (sync, ["B", "C"])], tmp_path / "mixed").add_contact_restraints()
     moved.add_contact_restraints(kind="ambiguous", source=sync, chain_map={"A": "A", "B": "B", "C": "C"})
     shift = lambda residues: [resid - 102 for resid in residues]
-    assert moved.restraint_table["residues_a"].tolist() == [shift(r) for r in direct.restraint_table["residues_a"]]
-    assert moved.restraint_table["residues_b"].tolist() == direct.restraint_table["residues_b"].tolist()
+    assert moved.restraint_table()["residues_a"].tolist() == [shift(r) for r in direct.restraint_table()["residues_a"]]
+    assert moved.restraint_table()["residues_b"].tolist() == direct.restraint_table()["residues_b"].tolist()
 
 
 def _validate(text):

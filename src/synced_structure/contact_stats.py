@@ -42,13 +42,13 @@ def _contact_sides(contacts: pd.DataFrame) -> Iterator[tuple[str, ResidueToken, 
         contacts: Contacts table.
 
     Yields:
-        (chain label, residue token, distance in nm).
+        (chain key, residue token, distance in nm).
     """
     for row in contacts.to_dict("records"):
         distance = float(row["min_distance_nm"])
-        for side in ("1", "2"):
+        for side in ("a", "b"):
             token = _residue_token(row[f"sequence_index_{side}"], int(row[f"resnum_{side}"]), str(row[f"resname_{side}"]))
-            yield str(row[f"chain_{side}"]), token, distance
+            yield str(row[f"chain_key_{side}"]), token, distance
 
 ###################################### STATISTICS
 
@@ -70,22 +70,29 @@ class ContactStatsMixin(StructureState):
         """
         if contacts.empty:
             return pd.DataFrame(columns=PAIR_STAT_COLUMNS)
-        n_points = Counter(record["chain_id"] for record in self._contact_records(moieties=moieties))
-        pairs = sorted({tuple(sorted(p)) for p in zip(contacts["chain_1"], contacts["chain_2"])})
+        n_points = Counter(record["key"] for record in self._contact_records(moieties=moieties))
+        order = {key: position for position, key in enumerate(self.chains)}
+        pairs = sorted({tuple(sorted(p, key=order.__getitem__))
+                        for p in zip(contacts["chain_key_a"], contacts["chain_key_b"])},
+                       key=lambda pair: (order[pair[0]], order[pair[1]]))
         rows = []
-        for label_a, label_b in pairs:
-            same = label_a == label_b
-            pair_rows = self._pair_contacts(contacts, label_a, label_b)
+        for key_a, key_b in pairs:
+            same = key_a == key_b
+            pair_rows = self._pair_contacts(contacts, key_a, key_b)
             contacted_by_chain: dict[str, set[ResidueToken]] = {}
-            for label, residue, _ in _contact_sides(pair_rows):
-                contacted_by_chain.setdefault(label, set()).add(residue)
-            seen_a, seen_b = contacted_by_chain.get(label_a, set()), contacted_by_chain.get(label_b, set())
-            n_a, n_b = n_points[label_a], n_points[label_b]
+            for key, residue, _ in _contact_sides(pair_rows):
+                contacted_by_chain.setdefault(key, set()).add(residue)
+            seen_a, seen_b = contacted_by_chain.get(key_a, set()), contacted_by_chain.get(key_b, set())
+            n_a, n_b = n_points[key_a], n_points[key_b]
             possible = n_a * (n_a - 1) / 2 if same else n_a * n_b
             distances = pair_rows["min_distance_nm"]
             rows.append({
-                "chain_a": label_a,
-                "chain_b": label_b,
+                "chain_key_a": key_a,
+                "chain_a": self.chains[key_a].chain_id,
+                "auth_chain_a": self.chains[key_a].auth_chain_id,
+                "chain_key_b": key_b,
+                "chain_b": self.chains[key_b].chain_id,
+                "auth_chain_b": self.chains[key_b].auth_chain_id,
                 "contact_type": "intra" if same else "inter",
                 "contact_pairs": len(pair_rows),
                 "contacted_a": len(seen_a),
@@ -100,29 +107,30 @@ class ContactStatsMixin(StructureState):
         return pd.DataFrame(rows, columns=PAIR_STAT_COLUMNS)
 
     def _residue_profile_table(self, contacts: pd.DataFrame, moieties: Moieties,
-                         chain_keys: ChainRefs | None = None) -> pd.DataFrame:
+                         chain_ids: ChainRefs | None = None) -> pd.DataFrame:
         """Count contacts and the nearest partner distance of every contact-point residue.
 
         Args:
             contacts: Contacts table.
             moieties: Biomolecule types to include.
-            chain_keys: Chain keys to profile, or None for all.
+            chain_ids: Chain keys to profile, or None for all.
 
         Returns:
             One row per contact-point residue.
         """
         counts: Counter[tuple[str, ResidueToken]] = Counter()
         nearest: dict[tuple[str, ResidueToken], float] = {}
-        for label, residue, distance in _contact_sides(contacts):
-            counts[(label, residue)] += 1
-            nearest[(label, residue)] = min(nearest.get((label, residue), np.inf), float(distance))
+        for key, residue, distance in _contact_sides(contacts):
+            counts[(key, residue)] += 1
+            nearest[(key, residue)] = min(nearest.get((key, residue), np.inf), float(distance))
         rows = []
-        for record in self._contact_records(chain_keys, moieties):
+        for record in self._contact_records(chain_ids, moieties):
             index = record["sequence_index"]
             number = None if index is None else index + 1
-            point = (record["chain_id"], _residue_token(np.nan if index is None else number, record["resnum"], record["resname"]))
+            point = (record["key"], _residue_token(np.nan if index is None else number, record["resnum"], record["resname"]))
             rows.append({
                 "structure_id": self.structure_id,
+                "chain_key": record["key"],
                 "chain_id": record["chain_id"],
                 "auth_chain_id": record["auth_chain_id"],
                 "sequence_index": number,
@@ -134,8 +142,7 @@ class ContactStatsMixin(StructureState):
             })
         return pd.DataFrame(rows, columns=PROFILE_COLUMNS).astype({"sequence_index": "Int64"})
 
-    @staticmethod
-    def _separation_table(contacts: pd.DataFrame) -> pd.DataFrame:
+    def _separation_table(self, contacts: pd.DataFrame) -> pd.DataFrame:
         """Tabulate intra-chain polymer contacts with their sequence separation.
 
         Args:
@@ -144,10 +151,13 @@ class ContactStatsMixin(StructureState):
         Returns:
             One row per intra-chain contact with |i - j| and its distance.
         """
-        intra = contacts[contacts["chain_1"] == contacts["chain_2"]].dropna(subset=["sequence_index_1", "sequence_index_2"])
+        intra = contacts[contacts["chain_key_a"] == contacts["chain_key_b"]]
+        intra = intra.dropna(subset=["sequence_index_a", "sequence_index_b"])
         return pd.DataFrame({
-            "chain_id": intra["chain_1"].to_numpy(),
-            "separation": (intra["sequence_index_2"] - intra["sequence_index_1"]).abs().to_numpy(dtype=int),
+            "chain_key": intra["chain_key_a"].to_numpy(),
+            "chain_id": intra["chain_a"].to_numpy(),
+            "auth_chain_id": intra["auth_chain_a"].to_numpy(),
+            "separation": (intra["sequence_index_b"] - intra["sequence_index_a"]).abs().to_numpy(dtype=int),
             "min_distance_nm": intra["min_distance_nm"].to_numpy(),
         }, columns=SEPARATION_COLUMNS)
 
@@ -164,7 +174,7 @@ class ContactStatsMixin(StructureState):
         if contacts.empty:
             return pd.DataFrame(columns=MOIETY_PAIR_COLUMNS)
         frame = pd.DataFrame({
-            "moiety_pair": ["/".join(sorted(p)) for p in zip(contacts["moiety_1"], contacts["moiety_2"])],
+            "moiety_pair": ["/".join(sorted(p)) for p in zip(contacts["moiety_a"], contacts["moiety_b"])],
             "min_distance_nm": contacts["min_distance_nm"].to_numpy(),
         })
         out = frame.groupby("moiety_pair").agg(
@@ -176,20 +186,20 @@ class ContactStatsMixin(StructureState):
         return out[MOIETY_PAIR_COLUMNS]
 
     def _stat_tables_from_contacts(self, contacts: pd.DataFrame, moieties: Moieties,
-                                  chain_keys: ChainRefs | None = None) -> dict[str, pd.DataFrame]:
+                                  chain_ids: ChainRefs | None = None) -> dict[str, pd.DataFrame]:
         """Compute the contact_stat_tables tables from precomputed contacts.
 
         Args:
             contacts: Contacts table.
             moieties: Biomolecule types used for the contacts.
-            chain_keys: Chain keys to profile, or None for all.
+            chain_ids: Chain keys to profile, or None for all.
 
         Returns:
             The same dict as contact_stat_tables.
         """
         return {
             "pairs": self._pair_table(contacts, moieties),
-            "profile": self._residue_profile_table(contacts, moieties, chain_keys),
+            "profile": self._residue_profile_table(contacts, moieties, chain_ids),
             "separation": self._separation_table(contacts),
             "moiety_pairs": self._moiety_pair_table(contacts),
         }

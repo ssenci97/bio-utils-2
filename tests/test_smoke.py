@@ -21,13 +21,13 @@ def sync():
 def test_chains_and_moieties(sync):
     assert sync.chain_ids == ["B", "C", "A"]
     assert sync.get_sequence("B") == "AGCGTGGGCGT"
-    assert set(sync.moiety_table["moiety"]) == {"protein", "nucleic", "other"}
-    assert sync.chain_ids_by_moiety("nucleic") == ["A", "B"]
+    assert set(sync.moiety_table()["moiety"]) == {"protein", "nucleic", "other"}
+    assert sync.chain_ids_by_moiety("nucleic") == ["B", "C"]   # keys (author IDs) of label chains A and B
     summary = sync.chain_table()
     assert summary.columns[0] == "structure_id" and summary["structure_id"].eq(sync.structure_id).all()
     assert summary["mapping_fraction"].eq(1.0).all()
     assert dict(zip(summary["chain_id"], summary["moiety"])) == {"B": "nucleic", "C": "protein", "A": "nucleic"}
-    polymer = sync.moiety_table.query("moiety != 'other'").groupby("chain_id")["moiety"].agg("+".join)
+    polymer = sync.moiety_table().query("moiety != 'other'").groupby("chain_id")["moiety"].agg("+".join)
     assert dict(zip(summary["chain_id"], summary["moiety"])) == polymer.to_dict()
     assert "partners" not in summary
     with_partners = sync.chain_table(partners=True)
@@ -36,19 +36,19 @@ def test_chains_and_moieties(sync):
 
 
 def test_indices_are_one_based_and_consistent(sync):
-    residues = sync.residue_table
+    residues = sync.residue_table()
     contacts = sync.contact_table(contact_type="all")
     assert residues["sequence_index"].min() == 1
     protein = residues[residues["chain_id"] == "C"]
     assert protein["reference_index"].iloc[0] == 3
-    merged = contacts.merge(residues, left_on=["chain_1", "sequence_index_1"], right_on=["chain_id", "sequence_index"])
-    assert (merged["resnum_1"] == merged["pdb_resnum"]).all()
+    merged = contacts.merge(residues, left_on=["chain_a", "sequence_index_a"], right_on=["chain_id", "sequence_index"])
+    assert (merged["resnum_a"] == merged["pdb_resnum"]).all()
 
 
 def test_contacts_and_strings(sync, tmp_path):
     contacts = sync.contact_table(contact_type="inter", moieties=("protein", "nucleic", "other"))
-    assert {"protein", "nucleic"} <= set(contacts["moiety_1"]) | set(contacts["moiety_2"])
-    assert contacts.loc[contacts["moiety_2"] == "other", "sequence_index_2"].isna().all()
+    assert {"protein", "nucleic"} <= set(contacts["moiety_a"]) | set(contacts["moiety_b"])
+    assert contacts.loc[contacts["moiety_b"] == "other", "sequence_index_b"].isna().all()
     text = sync.contact_string("B")
     assert "1" in text
     masked = sync.masked_sequence("B")
@@ -95,15 +95,15 @@ def test_partner_structures(sync):
     assert child.get_reference_sequence("B") == sync.get_reference_sequence("B")
     assert child.mmcif_dict is sync.mmcif_dict
     child_row, parent_row = child.interface_complex("A", "B"), sync.interface_complex("A", "B")
-    assert child_row.pop("structure") == "1AAY_A_B"
-    parent_row.pop("structure")
+    assert child_row.pop("structure_id") == "1AAY_A_B"
+    parent_row.pop("structure_id")
     assert child_row == parent_row
 
 
 def test_reference_numbering_keeps_hetero(sync):
-    before = sync.moiety_table
+    before = sync.moiety_table()
     sync.apply_reference_numbering()
-    after = sync.moiety_table
+    after = sync.moiety_table()
     assert before[before["moiety"] == "other"].equals(after[after["moiety"] == "other"])
     assert sync["A"].residues[0].id[1] == 3
 

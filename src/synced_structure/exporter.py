@@ -1,4 +1,4 @@
-"""Curated exporters for SyncedStructure tables and figures: TSV tables for chains, residues, moieties, alignments, and interfaces, single or grid figures, and standalone 3D view pages."""
+"""Curated exporters for SyncedStructure tables and figures: TSV tables for chains, residues, moieties, alignments, contacts, and interfaces, single or grid figures, and standalone 3D view pages."""
 
 from __future__ import annotations
 
@@ -14,9 +14,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from tqdm import tqdm
 
-from ._types import ChainPair, ChainRefs, PathLike
+from ._types import ChainPair, ChainRefs, Moieties, PathLike
 from .base import StructureState
-from .constants import CHAIN_COLUMNS, EXPORT_SEP, EXPORT_SUFFIX, MAPPING_COLUMNS
+from .constants import (
+    CONTACT_SEQUENCE_COLUMNS, CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, DEFAULT_CONTACT_TYPE, EXPORT_SEP,
+    EXPORT_SUFFIX, MAPPING_COLUMNS,
+)
 from .panels import build_panel_grid, rasterize_figure
 from .plot_style import EXPORT_DPI, FIGURE_FORMATS, PANEL_FORMATS, PDF_RC
 from .viz3d import VIZ_PAGE_TEMPLATE
@@ -41,20 +44,6 @@ class ExportMixin(StructureState):
         """
         path = Path(outdir or self.config["save_outdir"]).expanduser()
         path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    @staticmethod
-    def _prepare_path(path: PathLike) -> Path:
-        """Resolve a file path, creating its parent directory if missing.
-
-        Args:
-            path: File path.
-
-        Returns:
-            The path, with the user directory expanded.
-        """
-        path = Path(path).expanduser()
-        path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
     def _write_table(self, frame: pd.DataFrame, name: str, outdir: PathLike | None = None) -> Path:
@@ -103,7 +92,7 @@ class ExportMixin(StructureState):
 ###################################### CHAIN AND RESIDUE TABLES
 
     def export_chain_table(self, outdir: PathLike | None = None) -> Path:
-        """Export one row per chain with entity, description, and polymer residue count.
+        """Export chain_table.
 
         Args:
             outdir: Output directory, or None for the configured save_outdir.
@@ -111,19 +100,7 @@ class ExportMixin(StructureState):
         Returns:
             The written path, '{structure_id}_chains.tsv'.
         """
-        descriptions = self._entity_descriptions()
-        rows = [
-            {
-                "structure_id": self.structure_id,
-                "chain_id": data.chain_id,
-                "auth_chain_id": data.auth_chain_id,
-                "entity_id": data.entity_id,
-                "description": descriptions.get(data.entity_id or ""),
-                "residues": len(data.residues),
-            }
-            for data in self.chains.values()
-        ]
-        return self._write_table(pd.DataFrame(rows, columns=CHAIN_COLUMNS), "chains", outdir)
+        return self._write_table(self.chain_table(), "chains", outdir)
 
     def export_chain_residue_table(self, chain_ids: ChainRefs | None = None, outdir: PathLike | None = None) -> Path:
         """Export the residue-to-reference mapping of the selected chains.
@@ -149,7 +126,7 @@ class ExportMixin(StructureState):
         Returns:
             The written path, '{structure_id}_residues.tsv'.
         """
-        return self._write_table(self.residue_table, "residues", outdir)
+        return self._write_table(self.residue_table(), "residues", outdir)
 
     def export_moiety_table(self, outdir: PathLike | None = None) -> Path:
         """Export moiety_table.
@@ -160,7 +137,7 @@ class ExportMixin(StructureState):
         Returns:
             The written path, '{structure_id}_moieties.tsv'.
         """
-        return self._write_table(self.moiety_table, "moieties", outdir)
+        return self._write_table(self.moiety_table(), "moieties", outdir)
 
 ###################################### ALIGNMENT TABLES
 
@@ -173,7 +150,7 @@ class ExportMixin(StructureState):
         Returns:
             The written path, '{structure_id}_alignment_stats.tsv'.
         """
-        return self._write_table(self.alignment_table, "alignment_stats", outdir)
+        return self._write_table(self.alignment_table(), "alignment_stats", outdir)
 
     def export_alignment_column_table(self, outdir: PathLike | None = None) -> Path:
         """Export alignment_column_table.
@@ -184,7 +161,70 @@ class ExportMixin(StructureState):
         Returns:
             The written path, '{structure_id}_alignment_positions.tsv'.
         """
-        return self._write_table(self.alignment_column_table, "alignment_positions", outdir)
+        return self._write_table(self.alignment_column_table(), "alignment_positions", outdir)
+
+###################################### CONTACT TABLES
+
+    def export_contact_strings(self, outdir: PathLike | None = None, cutoff: float = CONTACTS_CUTOFF_NM,
+                               contact_type: str = DEFAULT_CONTACT_TYPE, reference: bool = False,
+                               scheme: str = "ca", moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> Path:
+        """Export each chain's sequence and contact string.
+
+        Args:
+            outdir: Output directory, or None for the configured save_outdir.
+            cutoff: Distance cutoff in nm.
+            contact_type: Contact type.
+            reference: Whether to use reference sequences (reference_contact_string), skipping chains without one.
+            scheme: Contact scheme ('ca' or 'sidechain').
+            moieties: Biomolecule types included in the output.
+
+        Returns:
+            The written path, '{structure_id}_contact_strings.tsv', or '{structure_id}_contact_strings_reference.tsv'
+            with reference=True.
+        """
+        contacts = self.contact_table(cutoff=cutoff, contact_type=contact_type, scheme=scheme, moieties=moieties)
+        options: dict[str, Any] = {"cutoff": cutoff, "contact_type": contact_type, "contacts": contacts,
+                                   "scheme": scheme, "moieties": moieties}
+        rows = []
+        for chain_key, data in self.chains.items():
+            if reference:
+                if not data.reference_sequence:
+                    continue
+                sequence = data.reference_sequence
+                text = self.reference_contact_string(chain_key, **options)
+            else:
+                sequence = self._moiety_sequence(chain_key, moieties)
+                text = self.contact_string(chain_key, **options)
+            rows.append({
+                "structure_id": self.structure_id,
+                "chain_key": chain_key,
+                "chain_id": data.chain_id,
+                "auth_chain_id": data.auth_chain_id,
+                "sequence": sequence,
+                "contacts": text,
+                "contact_type": contact_type,
+                "mdtraj_scheme": scheme,
+                "cutoff_nm": cutoff,
+            })
+        name = "contact_strings_reference" if reference else "contact_strings"
+        return self._write_table(pd.DataFrame(rows, columns=CONTACT_SEQUENCE_COLUMNS), name, outdir)
+
+    def export_contact_stat_tables(self, outdir: PathLike | None = None, cutoff: float = CONTACTS_CUTOFF_NM,
+                                   moieties: Moieties = DEFAULT_CONTACT_MOIETIES, scheme: str = "ca") -> list[Path]:
+        """Export every table of contact_stat_tables.
+
+        Args:
+            outdir: Output directory, or None for the configured save_outdir.
+            cutoff: Distance cutoff in nm.
+            moieties: Biomolecule types to include.
+            scheme: Contact scheme, 'ca' or 'sidechain'.
+
+        Returns:
+            The written paths, '{structure_id}_contact_stats_{name}.tsv' for pairs, profile, separation, and
+            moiety_pairs.
+        """
+        tables = self.contact_stat_tables(cutoff=cutoff, moieties=moieties, scheme=scheme)
+        return [self._write_table(frame, f"contact_stats_{name}", outdir) for name, frame in tables.items()]
 
 ###################################### INTERFACE TABLES
 
@@ -226,11 +266,13 @@ class ExportMixin(StructureState):
     def export_plot_grid(self, plot_funcs: Sequence[Callable[..., Any]], name: str, outdir: PathLike | None = None,
                          formats: Sequence[str] = PANEL_FORMATS, dpi: int = EXPORT_DPI, raster: bool = True,
                          **grid_kwargs: Any) -> list[Path]:
-        """Save a panel grid of plot functions as 'name' in each format.
+        """Save a panel grid of plot functions as '{structure_id}_{name}' in each format.
+
+        For several grids in one multi-page PDF, use export_panels_pdf.
 
         Args:
             plot_funcs: Plot functions, one per panel, as taken by build_panel_grid.
-            name: File name without extension.
+            name: File name suffix after the structure ID.
             outdir: Output directory, or None for the configured save_outdir.
             formats: File formats.
             dpi: Resolution of raster output.
@@ -241,7 +283,7 @@ class ExportMixin(StructureState):
             The written paths.
         """
         fig = build_panel_grid(plot_funcs, **grid_kwargs)
-        return self._save_figure(fig, name, outdir, formats, dpi, raster)
+        return self._save_figure(fig, f"{self.structure_id}_{name}", outdir, formats, dpi, raster)
 
 ###################################### 3D VIEWS
 

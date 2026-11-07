@@ -1,10 +1,9 @@
-"""Residue classification, numbering, reference-index mapping, and per-residue tables with standard and author chain IDs."""
+"""Residue classification, numbering, reference-index mapping, and per-residue tables with label and author chain IDs."""
 
 ###################################### IMPORTS AND CONSTANTS
 
 from __future__ import annotations
 
-import copy
 
 import numpy as np
 import pandas as pd
@@ -127,6 +126,7 @@ class ResidueMixin(StructureState):
         rows = [
             {
                 "structure_id": self.structure_id,
+                "chain_key": chain_id,
                 "chain_id": data.chain_id,
                 "auth_chain_id": data.auth_chain_id,
                 "pdb_resnum": residue.id[1],
@@ -148,11 +148,10 @@ class ResidueMixin(StructureState):
             chain_id: Chain key, label ID, or author ID.
 
         Returns:
-            Table with standard and author chain IDs, pdb_resnum, sequence_index, and reference_index.
+            Table with label and author chain IDs, pdb_resnum, sequence_index, and reference_index.
         """
         return self._chain_residue_table(self._chain_key(chain_id))[MAPPING_COLUMNS].reset_index(drop=True)
 
-    @property
     def residue_table(self) -> pd.DataFrame:
         """Return all polymer residues across chains with their indices.
 
@@ -163,7 +162,6 @@ class ResidueMixin(StructureState):
             return pd.DataFrame(columns=RESIDUE_COLUMNS)
         return pd.concat([self._chain_residue_table(chain_id) for chain_id in self.chains], ignore_index=True)
 
-    @property
     def moiety_table(self) -> pd.DataFrame:
         """Return residue and atom counts per chain and biomolecule type.
 
@@ -171,7 +169,7 @@ class ResidueMixin(StructureState):
             One row per chain and moiety.
         """
         rows = []
-        for data in self.chains.values():
+        for key, data in self.chains.items():
             counts: dict[str, tuple[int, int]] = {}
             pairs = list(zip(data.residues, data.moieties)) + data.hetero
             for residue, moiety in pairs:
@@ -180,6 +178,7 @@ class ResidueMixin(StructureState):
             for moiety, (n_res, n_atoms) in counts.items():
                 rows.append({
                     "structure_id": self.structure_id,
+                    "chain_key": key,
                     "chain_id": data.chain_id,
                     "auth_chain_id": data.auth_chain_id,
                     "moiety": moiety,
@@ -195,15 +194,15 @@ class ResidueMixin(StructureState):
             moiety: One of 'protein', 'nucleic', or 'other'.
 
         Returns:
-            Label chain IDs, in chain order.
+            Chain keys, in chain order.
 
         Raises:
             ValueError: If moiety is not a known biomolecule type.
         """
         if moiety not in MOIETIES:
             raise ValueError(f"moiety must be one of {MOIETIES}.")
-        frame = self.moiety_table
-        return frame.loc[frame["moiety"] == moiety, "chain_id"].drop_duplicates().tolist()
+        return [key for key, data in self.chains.items()
+                if moiety in data.moieties or any(kind == moiety for _, kind in data.hetero)]
 
 ###################################### RENUMBERING AND TRIMMING
 
@@ -272,19 +271,15 @@ class ResidueMixin(StructureState):
             data.sequence_index_to_ref_index = {index: residue.id[1] - 1 for index, residue in enumerate(data.residues)}
         return self
 
-    def renumber_chain(self, chain_id: str, in_place: bool = False) -> Chain:
-        """Renumber a chain's polymer residues 1..N.
+    def renumber_chain(self, chain_id: str) -> Self:
+        """Renumber a chain's polymer residues 1..N in place, keeping its mapping; hetero residues stay.
 
         Args:
             chain_id: Chain key, label ID, or author ID.
-            in_place: Whether to renumber the stored chain itself instead of a copy.
 
         Returns:
-            The renumbered chain.
+            This structure.
         """
-        chain_id = self._chain_key(chain_id)
-        chain = self.chains[chain_id].chain if in_place else copy.deepcopy(self.chains[chain_id].chain)
-        self._renumber_polymers(chain)
-        if in_place:
-            self._build_chains()
-        return chain
+        self._renumber_polymers(self.chains[self._chain_key(chain_id)].chain)
+        self._build_chains()
+        return self

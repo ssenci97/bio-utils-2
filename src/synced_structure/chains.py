@@ -1,4 +1,4 @@
-"""Chain lifecycle, sequence mapping, chain renaming, external references, and per-chain summaries keyed by author IDs with standard IDs alongside."""
+"""Chain lifecycle, sequence mapping, chain renaming, external references, and per-chain summaries keyed by author IDs with label IDs alongside."""
 
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ from .alignment import query_coverage
 from .base import StructureState
 from .constants import (
     ANGSTROM_PER_NM, CONTACTS_CUTOFF_NM, COORD_BLOCK_ROWS, DEFAULT_CONTACT_MOIETIES, MATCH_COLUMNS, MOIETY_OTHER,
-    POLYMER_MOIETIES, RENAME_COLUMNS,
+    POLYMER_MOIETIES,
 )
 from .residues import split_residues
 from .sequence import clean_sequence, one_letter_code
-from .utils import log_info
+from .utils import blocked_distances, log_info
 
 if TYPE_CHECKING:
     from Bio.PDB.Chain import Chain
@@ -39,7 +39,7 @@ class ChainRecord:
 
     Attributes:
         chain: Biopython chain.
-        chain_id: Label (standard) chain ID.
+        chain_id: Label chain ID.
         auth_chain_id: Author chain ID.
         entity_id: Entity ID, or None if unknown.
         residues: Polymer residues in chain order.
@@ -89,10 +89,10 @@ class ChainMixin(StructureState):
     """Chain lifecycle, reference sequence mapping, chain renaming, and per-chain summaries."""
 
     def _chain_key(self, chain_id: str) -> str:
-        """Return the chain key matching a key, standard ID, or author ID.
+        """Return the chain key matching a key, label ID, or author ID.
 
         Args:
-            chain_id: Chain key, standard chain ID, or author chain ID.
+            chain_id: Chain key, label ID, or author ID.
 
         Returns:
             The chain key.
@@ -130,8 +130,12 @@ class ChainMixin(StructureState):
 
     def _make_chain_record(self, chain: Chain, reference_sequence: str | None = None, entity_id: str | None = None,
                          metadata: Mapping[str, Any] | None = None, external_ref: str | None = None,
-                         refseq_id: str | None = None) -> ChainRecord:
+                         refseq_id: str | None = None, previous: ChainRecord | None = None) -> ChainRecord:
         """Build the record of a chain from its residues and metadata.
+
+        The mapping is rebuilt by global alignment, except that a previous record's mapping is kept when the
+        observed and reference sequences are unchanged, so mappings set by apply_reference_numbering or left empty
+        by set_reference_sequence(remap=False) survive later chain changes.
 
         Args:
             chain: Biopython chain, keyed by its chain key.
@@ -140,6 +144,7 @@ class ChainMixin(StructureState):
             metadata: User metadata, or None.
             external_ref: User-set external reference, or None to use the mmCIF reference.
             refseq_id: User-set reference sequence ID, or None to fall back to the external reference.
+            previous: Earlier record of the same chain, or None.
 
         Returns:
             The chain record, with its observed-to-reference mapping.
@@ -164,7 +169,10 @@ class ChainMixin(StructureState):
             external_ref=external_ref,
             refseq_id=refseq_id,
         )
-        record.sequence_index_to_ref_index = self._reference_index_map(sequence, reference_sequence)
+        if previous is not None and (previous.sequence, previous.reference_sequence) == (sequence, reference_sequence):
+            record.sequence_index_to_ref_index = dict(previous.sequence_index_to_ref_index)
+        else:
+            record.sequence_index_to_ref_index = self._reference_index_map(sequence, reference_sequence)
         return record
 
     def _build_chains(self) -> None:
@@ -180,6 +188,7 @@ class ChainMixin(StructureState):
                 "metadata": old.metadata,
                 "external_ref": old.external_ref,
                 "refseq_id": old.refseq_id,
+                "previous": old,
             }
             rebuilt[key] = self._make_chain_record(chain, **kept)
         self.chains = rebuilt
@@ -194,7 +203,7 @@ class ChainMixin(StructureState):
         """Return the record of a chain.
 
         Args:
-            chain_id: Chain key, standard ID, or author ID.
+            chain_id: Chain key, label ID, or author ID.
 
         Returns:
             The chain record.
@@ -221,7 +230,7 @@ class ChainMixin(StructureState):
         """Return True if the chain is loaded.
 
         Args:
-            chain_id: Chain key, standard ID, or author ID.
+            chain_id: Chain key, label ID, or author ID.
 
         Returns:
             Whether a loaded chain matches.
@@ -236,7 +245,7 @@ class ChainMixin(StructureState):
         """Return the observed one-letter sequence of a chain.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
 
         Returns:
             The observed sequence.
@@ -247,7 +256,7 @@ class ChainMixin(StructureState):
         """Return the reference sequence of a chain.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
 
         Returns:
             The reference sequence.
@@ -258,7 +267,7 @@ class ChainMixin(StructureState):
         """Return the external reference of a chain: the user-set value, else the mmCIF accession.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
 
         Returns:
             The reference, or None if there is none.
@@ -268,25 +277,25 @@ class ChainMixin(StructureState):
             return data.external_ref
         return ", ".join(self._external_refs.get(data.entity_id or "", [])) or None
 
-    def set_accession(self, chain_id: str, external_ref: str | None) -> Self:
-        """Set a chain's external reference, overriding the mmCIF value in summaries.
+    def set_accession(self, chain_id: str, accession: str | None) -> Self:
+        """Set a chain's external accession, overriding the mmCIF value in tables (column external_ref).
 
         Args:
-            chain_id: Chain identifier, standard or author.
-            external_ref: External accession, or None to fall back to the mmCIF reference.
+            chain_id: Chain key, label ID, or author ID.
+            accession: External accession, or None to fall back to the mmCIF reference.
 
         Returns:
             This structure.
         """
         chain_id = self._chain_key(chain_id)
-        self.chains[chain_id].external_ref = None if external_ref is None else str(external_ref)
+        self.chains[chain_id].external_ref = None if accession is None else str(accession)
         return self
 
     def get_reference_id(self, chain_id: str) -> str | None:
         """Return the ID of a chain's reference sequence: the user-set value, else the external reference.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
 
         Returns:
             The reference sequence ID, or None.
@@ -294,25 +303,25 @@ class ChainMixin(StructureState):
         data = self.chains[self._chain_key(chain_id)]
         return data.refseq_id or self.get_accession(chain_id)
 
-    def set_reference_id(self, chain_id: str, refseq_id: str | None) -> Self:
-        """Set the ID of a chain's reference sequence, which may differ from its external reference.
+    def set_reference_id(self, chain_id: str, reference_id: str | None) -> Self:
+        """Set the ID of a chain's reference sequence (column refseq_id), which may differ from its accession.
 
         Args:
-            chain_id: Chain identifier, standard or author.
-            refseq_id: Reference sequence ID, or None to fall back to the external reference.
+            chain_id: Chain key, label ID, or author ID.
+            reference_id: Reference sequence ID, or None to fall back to the external accession.
 
         Returns:
             This structure.
         """
         chain_id = self._chain_key(chain_id)
-        self.chains[chain_id].refseq_id = None if refseq_id is None else str(refseq_id)
+        self.chains[chain_id].refseq_id = None if reference_id is None else str(reference_id)
         return self
 
     def set_chain_metadata(self, chain_id: str, key: str, value: Any) -> Self:
         """Store a user-defined value on a chain.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
             key: Metadata key.
             value: Value to store.
 
@@ -326,7 +335,7 @@ class ChainMixin(StructureState):
         """Set a chain's entity ID.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
             entity_id: New entity identifier.
 
         Returns:
@@ -339,7 +348,7 @@ class ChainMixin(StructureState):
         """Set a chain's reference sequence, optionally rebuilding its mapping.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
             sequence: New reference sequence.
             remap: Whether to rebuild the mapping.
 
@@ -374,7 +383,7 @@ class ChainMixin(StructureState):
         """Rebuild the mapping of one chain against its current reference.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
 
         Returns:
             This structure.
@@ -399,7 +408,7 @@ class ChainMixin(StructureState):
         """Apply optional reference, entity, and metadata values to a chain.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
             reference_sequence: Reference sequence, or None.
             entity_id: Entity ID, or None.
             metadata: Metadata values, or None.
@@ -447,7 +456,7 @@ class ChainMixin(StructureState):
         """Remove a chain.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
 
         Returns:
             This structure.
@@ -465,7 +474,7 @@ class ChainMixin(StructureState):
         The parent is unchanged; the mmCIF dict and aligners are shared with it, not copied.
 
         Args:
-            chain_ids: Chain identifiers to keep, standard or author.
+            chain_ids: Chains to keep: keys, label IDs, or author IDs.
             structure_id: ID of the copy, or None for '{structure_id}_{key}_{key}...'.
 
         Returns:
@@ -490,7 +499,7 @@ class ChainMixin(StructureState):
         """Replace a chain with a copy of a Biopython chain, keeping its key.
 
         Args:
-            chain_id: Chain identifier, standard or author.
+            chain_id: Chain key, label ID, or author ID.
             chain: Replacement Biopython chain.
             reference_sequence: Optional reference sequence.
             entity_id: Optional entity ID.
@@ -548,10 +557,11 @@ class ChainMixin(StructureState):
         """
         query = clean_sequence(sequence)
         rows = []
-        for data in self.chains.values():
+        for key, data in self.chains.items():
             identity, aligned, coverage = self._local_identity(data.sequence, query)
             if aligned and identity >= min_identity and coverage >= min_coverage:
                 rows.append({
+                    "chain_key": key,
                     "chain_id": data.chain_id,
                     "auth_chain_id": data.auth_chain_id,
                     "identity_percent": identity,
@@ -562,7 +572,7 @@ class ChainMixin(StructureState):
         return frame.sort_values(["identity_percent", "aligned_residues"], ascending=False, ignore_index=True)
 
     def rename_chains(self, mapping: Mapping[str, str]) -> Self:
-        """Rename chain keys, keeping standard and author ID maps, entities, and sequences in sync.
+        """Rename chain keys, keeping label and author ID maps, entities, and sequences in sync.
 
         Args:
             mapping: {old chain identifier: new key}.
@@ -628,8 +638,11 @@ class ChainMixin(StructureState):
         return renames, matched
 
     def rename_chains_by_sequence(self, targets: Mapping[str, str], min_identity: float = 90.0,
-                                  min_coverage: float = 50.0) -> pd.DataFrame:
-        """Rename chain keys to the target whose sequence they match best.
+                                  min_coverage: float = 50.0) -> Self:
+        """Rename chain keys to the target whose sequence they match best, and set that sequence as reference.
+
+        Each target is paired with at most one chain, greedily by identity, then aligned length; unmatched targets
+        and chains are logged. Use find_chains_by_sequence to inspect the matches first.
 
         Args:
             targets: {new key: sequence}.
@@ -638,30 +651,19 @@ class ChainMixin(StructureState):
                 not a match.
 
         Returns:
-            One row per target and unmatched chain, with the old standard and author IDs and a status.
+            This structure.
         """
         targets = {str(new): clean_sequence(seq) for new, seq in targets.items()}
-        renames, matched = self._match_targets(targets, min_identity, min_coverage)
-        rows = []
-        for new_id in targets:
-            if new_id in matched:
-                old_id, identity = matched[new_id]
-                old = self.chains[old_id]
-                rows.append({"new_chain_id": new_id, "old_chain_id": old.chain_id,
-                             "old_auth_chain_id": old.auth_chain_id, "identity_percent": identity, "status": "renamed"})
-            else:
-                rows.append({"new_chain_id": new_id, "old_chain_id": None, "old_auth_chain_id": None,
-                             "identity_percent": None, "status": "unmatched_target"})
-        for key, record in self.chains.items():
-            if key not in renames:
-                rows.append({"new_chain_id": None, "old_chain_id": record.chain_id,
-                             "old_auth_chain_id": record.auth_chain_id, "identity_percent": None,
-                             "status": "unmatched_chain"})
+        renames, _ = self._match_targets(targets, min_identity, min_coverage)
+        unmatched = [new_id for new_id in targets if new_id not in renames.values()]
+        if unmatched:
+            log_info(f"{self.structure_id}: no chain matches target(s) {', '.join(unmatched)}")
         if renames:
+            log_info(f"{self.structure_id}: renamed " + ", ".join(f"{old}->{new}" for old, new in renames.items()))
             self.rename_chains(renames)
             for new_id in renames.values():
                 self.set_reference_sequence(new_id, targets[new_id])
-        return pd.DataFrame(rows, columns=RENAME_COLUMNS)
+        return self
 
 ###################################### CONTACT PARTNERS
 
@@ -682,11 +684,7 @@ class ChainMixin(StructureState):
         if (coords_a.min(axis=0) > coords_b.max(axis=0) + cutoff).any() or (
                 coords_b.min(axis=0) > coords_a.max(axis=0) + cutoff).any():
             return False
-        limit = cutoff * cutoff
-        for start in range(0, len(coords_a), block_rows):
-            if (((coords_a[start:start + block_rows, None] - coords_b[None]) ** 2).sum(axis=-1) <= limit).any():
-                return True
-        return False
+        return any((dist <= cutoff).any() for _, dist in blocked_distances(coords_a, coords_b, block_rows))
 
     def chain_partner_map(self, cutoff: float = CONTACTS_CUTOFF_NM,
                                moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> dict[str, list[str]]:
@@ -735,6 +733,7 @@ class ChainMixin(StructureState):
             present = set(data.moieties)
             row: dict[str, Any] = {
                 "structure_id": self.structure_id,
+                "chain_key": key,
                 "chain_id": data.chain_id,
                 "auth_chain_id": data.auth_chain_id,
                 "entity_id": data.entity_id,

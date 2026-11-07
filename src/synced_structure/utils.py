@@ -14,11 +14,12 @@ import importlib.util
 import logging
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import numpy as np
 import yaml
 
 from ._types import PathLike
@@ -36,6 +37,23 @@ if not logger.handlers:
     logger.addHandler(_handler)
     logger.setLevel(logging.INFO)
     logger.propagate = False
+
+###################################### DISTANCES
+
+
+def blocked_distances(xa: np.ndarray, xb: np.ndarray, block: int) -> Iterator[tuple[int, np.ndarray]]:
+    """Walk the pairwise distances of two point sets a block of xa rows at a time, bounding memory.
+
+    Args:
+        xa: (n, 3) coordinates.
+        xb: (m, 3) coordinates, in the same unit.
+        block: Number of xa rows per block.
+
+    Yields:
+        (first xa row of the block, distances of shape (rows in block, m)).
+    """
+    for start in range(0, len(xa), block):
+        yield start, np.linalg.norm(xa[start:start + block, None] - xb[None], axis=-1)
 
 ###################################### CONFIG AND LOGGING
 

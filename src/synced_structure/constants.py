@@ -72,42 +72,40 @@ ALN_SCORE_MISMATCH_WEIGHT = 0.5
 ALN_SCORE_GAP_WEIGHT = 1.5
 
 CONTACT_COLUMNS = [
-    "chain_1", "auth_chain_1", "resnum_1", "resname_1", "sequence_index_1",
-    "chain_2", "auth_chain_2", "resnum_2", "resname_2", "sequence_index_2",
-    "min_distance_nm", "contact_type", "moiety_1", "moiety_2",
+    "chain_key_a", "chain_a", "auth_chain_a", "resnum_a", "resname_a", "sequence_index_a",
+    "chain_key_b", "chain_b", "auth_chain_b", "resnum_b", "resname_b", "sequence_index_b",
+    "min_distance_nm", "contact_type", "moiety_a", "moiety_b",
 ]
 CONTACT_SEQUENCE_COLUMNS = [
-    "structure_id", "chain_id", "auth_chain_id", "sequence", "contacts",
+    "structure_id", "chain_key", "chain_id", "auth_chain_id", "sequence", "contacts",
     "contact_type", "mdtraj_scheme", "cutoff_nm",
 ]
-CHAIN_COLUMNS = ["structure_id", "chain_id", "auth_chain_id", "entity_id", "description", "residues"]
-MATCH_COLUMNS = ["chain_id", "auth_chain_id", "identity_percent", "aligned_residues", "query_coverage_percent"]
-RENAME_COLUMNS = ["new_chain_id", "old_chain_id", "old_auth_chain_id", "identity_percent", "status"]
+MATCH_COLUMNS = ["chain_key", "chain_id", "auth_chain_id", "identity_percent", "aligned_residues", "query_coverage_percent"]
 RESIDUE_COLUMNS = [
-    "structure_id", "chain_id", "auth_chain_id", "pdb_resnum", "resname",
+    "structure_id", "chain_key", "chain_id", "auth_chain_id", "pdb_resnum", "resname",
     "sequence_index", "reference_index", "moiety",
 ]
-MOIETY_SUMMARY_COLUMNS = ["structure_id", "chain_id", "auth_chain_id", "moiety", "residues", "atoms"]
-MAPPING_COLUMNS = ["chain_id", "auth_chain_id", "pdb_resnum", "sequence_index", "reference_index"]
+MOIETY_SUMMARY_COLUMNS = ["structure_id", "chain_key", "chain_id", "auth_chain_id", "moiety", "residues", "atoms"]
+MAPPING_COLUMNS = ["chain_key", "chain_id", "auth_chain_id", "pdb_resnum", "sequence_index", "reference_index"]
 INTERFACE_COMPLEX_COLUMNS = [
-    "structure", "chain_a", "auth_chain_a", "chain_b", "auth_chain_b",
+    "structure_id", "chain_key_a", "chain_a", "auth_chain_a", "chain_key_b", "chain_b", "auth_chain_b",
     "len_res_a", "len_res_b", "len_atoms_a", "len_atoms_b", "dASA_A2",
     "initial_sasa_A2", "frac_dASA", "n_contacts", "iface_res_a", "iface_res_b",
     "min_dist_A", "contact_score",
 ]
 INTERFACE_RESIDUE_COLUMNS = [
-    "structure", "pair", "chain", "auth_chain", "resid", "resname", "dSASA_A2", "isolated_sasa_A2", "rel_dSASA",
+    "structure_id", "pair", "chain_key", "chain_id", "auth_chain_id", "resid", "resname", "dSASA_A2", "isolated_sasa_A2", "rel_dSASA",
     "n_partners", "min_dist_A", "contact_energy", "energy_per_partner", "partners",
 ]
 PAIR_STAT_COLUMNS = [
-    "chain_a", "chain_b", "contact_type", "contact_pairs", "contacted_a", "contacted_b",
+    "chain_key_a", "chain_a", "auth_chain_a", "chain_key_b", "chain_b", "auth_chain_b", "contact_type", "contact_pairs", "contacted_a", "contacted_b",
     "fraction_a", "fraction_b", "contact_density", "min_nm", "median_nm", "mean_nm",
 ]
 PROFILE_COLUMNS = [
-    "structure_id", "chain_id", "auth_chain_id", "sequence_index", "resnum", "resname",
+    "structure_id", "chain_key", "chain_id", "auth_chain_id", "sequence_index", "resnum", "resname",
     "moiety", "n_contacts", "nearest_nm",
 ]
-SEPARATION_COLUMNS = ["chain_id", "separation", "min_distance_nm"]
+SEPARATION_COLUMNS = ["chain_key", "chain_id", "auth_chain_id", "separation", "min_distance_nm"]
 MOIETY_PAIR_COLUMNS = ["moiety_pair", "contact_pairs", "median_nm", "mean_nm"]
 COMPLETE_MIN_SEPARATION = 2
 # Kyte-Doolittle hydropathy per one-letter residue code

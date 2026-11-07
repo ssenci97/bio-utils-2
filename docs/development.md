@@ -7,7 +7,7 @@ How the code is written and checked. Read this before changing the package.
 ```bash
 git clone https://github.com/ssenci97/bio-utils-2.git
 cd bio-utils-2
-pip install -e ".[dev]"            # editable install + pytest, ruff, pydoclint, mypy, typeguard, type stubs
+pip install -e ".[dev]"            # editable install + pytest, ruff, pydoclint, mypy, typeguard, type stubs, mkdocs
 pip install -e ".[dev,haddock]"    # also haddock3, for the docking tests
 ```
 
@@ -20,7 +20,8 @@ Always use the editable install (`-e`): tests and scripts then import the code i
 - **Mixins:** `SyncedStructure` is assembled from one mixin per area. Every mixin inherits `StructureState` (`base.py`), which declares the shared attributes and, for type checkers only, the methods mixins call on each other. If a mixin starts calling a method of another mixin, add its signature there.
 - **Tables first:** analyses return DataFrames (or dicts of them) with both chain IDs and 1-based indices; figures are drawn from those tables.
 - **Units:** nm for contacts, Å for interface metrics and docking.
-- **Names:** a name says what it returns. A verb prefix is used only when it fixes the return type or a side effect (`set_` → `self`, `export_` → paths, `plot_` → figure); otherwise the name is a noun whose last word is the type (`contact_table`, `chain_partner_map`, `contact_string`). New names must not be longer than needed. The API reference (`docs/index.html`) states the full grammar and lists every name; renames replace names outright, without deprecated aliases.
+- **Names:** a name says what it returns. A verb prefix is used only when it fixes the return type or a side effect (`set_` → `self`, `export_` → paths, `plot_` → figure); otherwise the name is a noun whose last word is the type (`contact_table`, `chain_partner_map`, `contact_string`). Every `_table` is a method. New names must not be longer than needed. [Conventions](guide/conventions.md) states the full grammar; renames replace names outright, without deprecated aliases, and are listed in the changelog.
+- **Columns:** tables that list chains carry `chain_key`, `chain_id`, `auth_chain_id` (`chain_key_a`, `chain_a`, `auth_chain_a` and `_b` for pairs), so any value read from a table can be passed back to a method.
 
 ## Tests
 
@@ -36,7 +37,7 @@ pytest -m ""           # everything — run this before every commit
 | Smoke and regressions | `tests/test_smoke.py`, `tests/test_regressions.py` | Every analysis on 1AAY, edge cases, bugs that were fixed |
 | Docking | `tests/test_docking.py` | HADDOCK3 set up offline; real low-throughput runs with `-m haddock` |
 | Network | `tests/test_network.py` | Live RCSB download, search and citations |
-| Documentation | `tests/test_docs.py` | README code runs; links resolve; `docs/index.html` is current and lists every public name |
+| Documentation | `tests/test_docs.py` | README and guide code runs; links resolve; the MkDocs site builds with `--strict`; the API reference lists every public name once; the configuration page lists every setting |
 | Types and docstrings | `tests/test_typing.py` | See below |
 
 `tests/test_typing.py` is a second layer for the type hints; each check is skipped when its tool is not installed:
@@ -59,8 +60,17 @@ The tools can also be run directly: `ruff check src`, `pydoclint src`, `mypy`. T
 
 ## Documentation
 
-- `README.md` holds installation and the quick start; its Python code runs in `tests/test_docs.py`, with `from_rcsb` served from `tests/data`. Mark a block that must not run with `<!-- skip-test -->` on the line before it.
-- `docs/index.html` is generated from signatures and docstrings: run `python docs/build_docs.py` after changing any docstring or name, and commit the result. The test fails when the page is stale.
+The site is built with [MkDocs](https://www.mkdocs.org/), the [Material](https://squidfunk.github.io/mkdocs-material/) theme and [mkdocstrings](https://mkdocstrings.github.io/python/), configured in `mkdocs.yml`, and published to <https://ssenci97.github.io/bio-utils-2/> by `.github/workflows/docs.yml` on every push to `main`.
+
+```bash
+mkdocs serve                       # live preview at http://127.0.0.1:8000
+mkdocs build --strict              # what CI runs; fails on any warning
+```
+
+- `README.md` holds the pitch, a short install and the quick start. Pages under `docs/` hold the rest: `quickstart.md`, `guide/*.md` (concepts, conventions, configuration, docking) and `reference/*.md` (API).
+- The API reference is generated from signatures and docstrings. Each `reference/*.md` page lists the `SyncedStructure` members of one area under `members:`. A new public method must be added to one of these lists; `tests/test_docs.py` fails until it is.
+- Python blocks in the README and in `docs/index.md`, `docs/quickstart.md` and `docs/guide/*.md` run in `tests/test_docs.py` (one namespace per page, with `from_rcsb` served from `tests/data`). Mark a block that must not run with `<!-- skip-test -->` on the line before it.
+- One-time GitHub setup: Settings → Pages → Source = **GitHub Actions**.
 
 ## Releasing
 

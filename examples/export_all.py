@@ -10,7 +10,7 @@ Outputs land in examples/output/:
 
 from pathlib import Path
 
-from synced_structure import SyncedStructure, export_panels_pdf
+from synced_structure import SyncedStructure
 
 PDB_ID = "6R3Q"
 OUTDIR = Path(__file__).resolve().parent / "output"
@@ -26,20 +26,15 @@ s = SyncedStructure.from_rcsb(PDB_ID)
 for folder in (TABLES, FIGURES, STRUCTURE):
     folder.mkdir(parents=True, exist_ok=True)
 
-# Contact statistics report label chain IDs; plots take chain keys (author IDs by default)
-key_of = {record.chain_id: key for key, record in s.chains.items()}
+# Tables carry chain keys (chain_key, chain_key_a/_b), which every method accepts
 summary = s.chain_table()
-stats = s.contact_stat_tables()
-inter = stats["pairs"].query("contact_type == 'inter'")
-inter_pairs = [(key_of[a], key_of[b]) for a, b in zip(inter["chain_a"], inter["chain_b"])]
-polymers = [key_of[row.chain_id] for row in summary.itertuples() if row.moiety in ("protein", "nucleic")]
+polymers = summary.loc[summary["moiety"] != "other", "chain_key"].tolist()      # protein, nucleic, or both
+pairs = s.contact_stat_tables()["pairs"].query("contact_type == 'inter'")
+inter_pairs = list(zip(pairs["chain_key_a"], pairs["chain_key_b"]))
 
 ###################################### TABLES (TSV)
 
-summary_path = TABLES / f"{PDB_ID}_summary.tsv"
-summary.to_csv(summary_path, sep="\t", index=False)
 tables = [
-    summary_path,
     s.export_chain_table(outdir=TABLES),
     s.export_chain_residue_table(outdir=TABLES),
     s.export_residue_table(outdir=TABLES),
@@ -47,13 +42,10 @@ tables = [
     s.export_alignment_table(outdir=TABLES),
     s.export_alignment_column_table(outdir=TABLES),
     *s.export_interface_tables(inter_pairs, outdir=TABLES),
-    s.export_contact_strings(TABLES / f"{PDB_ID}_contact_sequences.tsv"),
-    s.export_contact_strings(TABLES / f"{PDB_ID}_contact_sequences_reference.tsv", reference=True),
+    s.export_contact_strings(outdir=TABLES),
+    s.export_contact_strings(outdir=TABLES, reference=True),
+    *s.export_contact_stat_tables(outdir=TABLES),
 ]
-for key, frame in stats.items():
-    path = TABLES / f"{PDB_ID}_contact_stats_{key}.tsv"
-    frame.to_csv(path, sep="\t", index=False)
-    tables.append(path)
 
 ###################################### FIGURES (PDF)
 
@@ -75,9 +67,8 @@ for name, plot in figures.items():
 # How the interface grows with the cutoff, one panel per cutoff
 maps = [lambda ax, c=c: s.plot_multi_contact_map(polymers, cutoff=c, gray_cutoff=c * GRAY_FACTOR, size_in=3.5, ax=ax)
         for c in GRID_CUTOFFS_NM]
-figure_paths.append(export_panels_pdf([(maps, f"{PDB_ID} contacts by cutoff")], FIGURES,
-                                      filename=f"{PDB_ID}_contacts_by_cutoff.pdf",
-                                      sizes=3.5, ncols=len(GRID_CUTOFFS_NM)))
+figure_paths += s.export_plot_grid(maps, "contacts_by_cutoff", outdir=FIGURES, main_title=f"{PDB_ID} contacts by cutoff",
+                                   sizes=3.5, ncols=len(GRID_CUTOFFS_NM))
 
 ###################################### 3D VIEW (HTML)
 

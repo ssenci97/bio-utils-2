@@ -124,7 +124,7 @@ class AlignmentMixin(StructureState):
         """Tabulate the aligned columns of two sequences.
 
         Args:
-            label: Standard chain ID.
+            label: Label chain ID.
             auth: Author chain ID.
             ref_aligned: Gapped reference string of the alignment.
             obs_aligned: Gapped observed string of the alignment.
@@ -173,7 +173,7 @@ class AlignmentMixin(StructureState):
         divides matched and mismatched residues by the observed length.
 
         Args:
-            label: Standard chain ID.
+            label: Label chain ID.
             auth: Author chain ID.
             reference: Reference sequence.
             observed: Observed sequence.
@@ -216,17 +216,19 @@ class AlignmentMixin(StructureState):
 
 ###################################### EXPOSED ALIGNMENT FRAMES
 
-    @property
     def alignment_table(self) -> pd.DataFrame:
         """Return local alignment statistics of each chain against its reference.
 
         Returns:
             One row per aligned chain.
         """
-        rows = [self._local_alignment(chain_id)[0] for chain_id in self.chains]
-        return pd.DataFrame([row for row in rows if row])
+        rows = []
+        for chain_id in self.chains:
+            row = self._local_alignment(chain_id)[0]
+            if row:
+                rows.append({"structure_id": row["structure_id"], "chain_key": chain_id, **row})
+        return pd.DataFrame(rows)
 
-    @property
     def alignment_column_table(self) -> pd.DataFrame:
         """Return the column-by-column local alignment of every chain against its reference.
 
@@ -235,5 +237,6 @@ class AlignmentMixin(StructureState):
         """
         rows: list[Record] = []
         for chain_id in self.chains:
-            rows.extend(self._local_alignment(chain_id)[1])
+            rows.extend({"structure_id": row["structure_id"], "chain_key": chain_id, **row}
+                        for row in self._local_alignment(chain_id)[1])
         return pd.DataFrame(rows)

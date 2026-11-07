@@ -1,0 +1,109 @@
+site_name: synced_structure
+site_description: Biopython structures that keep every residue linked to its reference sequence, with contacts, interfaces, contact maps, 3D views and HADDOCK3 docking.
+site_url: https://ssenci97.github.io/bio-utils-2/
+repo_url: https://github.com/ssenci97/bio-utils-2
+repo_name: ssenci97/bio-utils-2
+edit_uri: edit/main/docs/
+copyright: Sergio Senci
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: install.md
+      - Quick start: quickstart.md
+  - Guide:
+      - Concepts: guide/concepts.md
+      - Conventions: guide/conventions.md
+      - Configuration: guide/configuration.md
+      - HADDOCK3 docking: guide/docking.md
+  - API reference:
+      - reference/index.md
+      - Structure and loading: reference/structure.md
+      - Chains: reference/chains.md
+      - Residues and alignment: reference/residues.md
+      - Contacts: reference/contacts.md
+      - Interfaces: reference/interfaces.md
+      - Plots and 3D views: reference/plots.md
+      - Export: reference/export.md
+      - Docking: reference/docking.md
+      - RCSB: reference/rcsb.md
+  - Development: development.md
+  - Changelog: changelog.md
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            docstring_section_style: table
+            show_root_heading: true
+            show_root_full_path: false
+            show_source: true
+            show_signature_annotations: true
+            separate_signature: true
+            signature_crossrefs: true
+            members_order: source
+            filters: ["!^_"]
+            merge_init_into_class: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            heading_level: 2
+
+watch:
+  - src
+  - README.md
+  - CHANGELOG.md

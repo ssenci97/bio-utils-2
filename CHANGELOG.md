@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+- A documentation site built with MkDocs, Material and mkdocstrings and published to GitHub Pages: installation, a quick start, guides (concepts, conventions, configuration, HADDOCK3 docking) and an API reference organised by pipeline step. It replaces `docs/index.html` and `docs/build_docs.py`.
+- The guide code blocks run in the tests, like the README's, and `mkdocs build --strict` is part of the test suite.
+
+### Fixed
+- A chain's mapping was rebuilt by global alignment whenever any chain was added, replaced, renamed or renumbered. This silently discarded mappings set by `apply_reference_numbering` and empty mappings from `set_reference_sequence(remap=False)`. Mappings are now kept while the chain's observed and reference sequences are unchanged.
+
+### Changed: methods
+Each change makes a method follow the naming rules: a verb fixes the return type, and every `_table` is a method.
+
+| Before | Now |
+|---|---|
+| `s.residue_table`, `s.moiety_table`, `s.alignment_table`, `s.alignment_column_table` (properties) | `s.residue_table()`, `s.moiety_table()`, `s.alignment_table()`, `s.alignment_column_table()` |
+| `dock.residue_table`, `dock.restraint_table`, `dock.contact_patch_table` (properties) | `dock.residue_table()`, `dock.restraint_table()`, `dock.contact_patch_table()` |
+| `rename_chains_by_sequence(...)` returned a report DataFrame | returns the structure, like `rename_chains`; unmatched targets are logged; inspect matches first with `find_chains_by_sequence` |
+| `renumber_chain(chain, in_place=False)` returned a renumbered Biopython `Chain` copy | `renumber_chain(chain)` renumbers in place and returns the structure; for a copy, use `subset_chains([chain]).renumber_chain(chain)` |
+| `export_contact_strings(output_path, ...)` | `export_contact_strings(outdir=None, ...)`, writing `{structure_id}_contact_strings.tsv` (`_reference.tsv` with `reference=True`) |
+| `export_chain_table` wrote a reduced table (entity, description, residue count) | writes `chain_table()` |
+| — | `export_contact_stat_tables(outdir=None, ...)` writes the four `contact_stat_tables` |
+| `export_plot_grid(..., name)` wrote `name` | writes `{structure_id}_{name}`, like every other export |
+| `chain_ids_by_moiety` returned label IDs | returns chain keys |
+| `set_accession(chain_id, external_ref)`, `set_reference_id(chain_id, refseq_id)` | `set_accession(chain_id, accession)`, `set_reference_id(chain_id, reference_id)` |
+| `plot_contact_map(..., save_path=)`, `plot_multi_contact_map(..., save_path=)` | removed: save with `export_plot(lambda: s.plot_contact_map(...), name)`, which applies the PDF settings |
+| default chains `"A"`/`"B"` in `contact_matrix`, `block_contact_matrix`, `interface_*`, `plot_contact_map`, `plot_multi_contact_map` | chain arguments are required (`chain_b=None` still means intra-chain) |
+| `chain_partner_structures(moieties=POLYMER_MOIETIES)` | same value, now the shared `DEFAULT_CONTACT_MOIETIES` default |
+
+### Changed: columns
+Every table that lists chains now has a `chain_key` column, or `chain_key_a`/`chain_key_b` for pairs, so values read from a table can be passed back to methods (label and author IDs can be different letters for the same chain). Column names are shared across tables:
+
+| Table | Before | Now |
+|---|---|---|
+| `contact_table` | `chain_1`, `auth_chain_1`, `resnum_1`, `resname_1`, `sequence_index_1`, `moiety_1` (and `_2`) | `chain_key_a`, `chain_a`, `auth_chain_a`, `resnum_a`, `resname_a`, `sequence_index_a`, `moiety_a` (and `_b`) |
+| interface complex rows (`interface_complex`, `interface_tables()["complex"]`, ...) | `structure` | `structure_id`, plus `chain_key_a`, `chain_key_b` |
+| interface residue rows | `structure`, `chain`, `auth_chain` | `structure_id`, `chain_key`, `chain_id`, `auth_chain_id` |
+| `contact_stat_tables()["pairs"]` | `chain_a`, `chain_b` (label IDs) | `chain_key_a`, `chain_a`, `auth_chain_a`, `chain_key_b`, `chain_b`, `auth_chain_b`; rows in chain order |
+| `contact_stat_tables()["profile"]`, `["separation"]` | `chain_id` (separation), `chain_id`, `auth_chain_id` (profile) | `chain_key`, `chain_id`, `auth_chain_id` |
+| `chain_table`, `residue_table`, `moiety_table`, `chain_residue_table`, `alignment_table`, `alignment_column_table`, `find_chains_by_sequence`, contact strings export | — | `chain_key` added |
+
 ## 0.1.0
 
 First stable version.
@@ -21,7 +61,7 @@ First stable version.
 ### Quality
 - Google-style docstrings and type hints on every function, checked by ruff, pydoclint and mypy, and at runtime by typeguard.
 - Tests: offline, network, low-throughput haddock3, documentation (README code runs, API page is current) and typing layers.
-- Documentation: a short [README](README.md) with installation and quick start, and a single-page HTML API reference generated from the docstrings by `docs/build_docs.py`.
+- Documentation: a short README with installation and quick start, and a single-page HTML API reference generated from the docstrings (replaced by the MkDocs site in the next version).
 
 ### Changed names
 Methods were renamed so that each name says what it returns: a verb prefix only where it fixes the return type or a side effect, otherwise a noun ending in the type (`contact_table`, `chain_partner_map`, `interface_tables`, `step_paths`). The six scalar interface methods (`interface_buried_area` and the others) were removed; read the value from `interface_complex(a, b)`. The two interface exports were merged into `export_interface_tables`. The old names were removed; update existing scripts with this table.

@@ -16,7 +16,7 @@ from matplotlib.patches import Patch, Rectangle
 from matplotlib.ticker import MaxNLocator
 from matplotlib.transforms import ScaledTranslation
 
-from ._types import Moieties, PathLike
+from ._types import Moieties
 from .base import StructureState
 from .constants import COMPLETE_MIN_SEPARATION, CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES
 from .plot_style import (
@@ -527,7 +527,7 @@ class ContactPlotMixin(StructureState):
 
 ###################################### PUBLIC PLOTS
 
-    def plot_contact_map(self, chain_a: str = "A", chain_b: str | None = None, cutoff: float = CONTACTS_CUTOFF_NM,
+    def plot_contact_map(self, chain_a: str, chain_b: str | None = None, cutoff: float = CONTACTS_CUTOFF_NM,
                          moieties: Moieties = DEFAULT_CONTACT_MOIETIES, scheme: str = "ca", value: str = "contact",
                          style: str = "scatter", gray: bool = True, gray_cutoff: float | None = None,
                          background: ColorType = CONTACT_MAP_BACKGROUND, color: ColorType = CONTACT_MAP_COLOR,
@@ -537,7 +537,7 @@ class ContactPlotMixin(StructureState):
                          tick_size: float | None = None, tick_rotation: float = 0, xlabel: str | None = None,
                          ylabel: str | None = None, min_marker_pt: float = CONTACT_MAP_MIN_MARKER_PT,
                          crop: bool = False, aspect: Aspect | None = None, dpi: float = CONTACT_MAP_DPI,
-                         title: str | None = None, ax: Axes | None = None, save_path: PathLike | None = None,
+                         title: str | None = None, ax: Axes | None = None,
                          matrix: np.ndarray | None = None) -> tuple[Figure | SubFigure, Axes]:
         """Plot a contact map of one chain or a chain pair, each axis titled by its chain ID.
 
@@ -546,7 +546,7 @@ class ContactPlotMixin(StructureState):
         crop=True zooms onto the residues in contact, which makes sparse interfaces readable.
 
         Args:
-            chain_a: Chain on the y-axis, standard or author ID.
+            chain_a: Chain on the y-axis: key, label ID, or author ID.
             chain_b: Chain on the x-axis, or None for an intra-chain map.
             cutoff: Distance cutoff in nm for the colored contacts.
             moieties: Biomolecule types to include.
@@ -570,10 +570,9 @@ class ContactPlotMixin(StructureState):
             min_marker_pt: Smallest marker side in points for the scatter style.
             crop: Whether to zoom onto the residues in contact, padded by CONTACT_CROP_PAD.
             aspect: 'equal', 'auto', or None for 'equal' unless the map is very elongated (e.g. protein-DNA).
-            dpi: Figure resolution.
+            dpi: Figure resolution on screen; export_plot sets the saved resolution.
             title: Title, or None for a default.
             ax: Axes to draw on, or None to create a figure.
-            save_path: File to save the figure to, or None.
             matrix: Precomputed pair matrix from contact_matrix, NaN for non-contacts.
 
         Returns:
@@ -611,11 +610,9 @@ class ContactPlotMixin(StructureState):
             gray_matrix=gray_matrix, gray_cutoff=gray_cutoff, n_ticks=n_ticks, show_ticks=show_ticks,
             tick_size=tick_size, tick_rotation=tick_rotation, xlabel=xlabel, ylabel=ylabel, crop=crop, aspect=aspect,
         )
-        if save_path is not None:
-            fig.figure.savefig(save_path, dpi=dpi)
         return fig, ax
 
-    def plot_multi_contact_map(self, chain_ids: Sequence[str] = ("A", "B"), cutoff: float = CONTACTS_CUTOFF_NM,
+    def plot_multi_contact_map(self, chain_ids: Sequence[str], cutoff: float = CONTACTS_CUTOFF_NM,
                                moieties: Moieties = DEFAULT_CONTACT_MOIETIES, scheme: str = "ca",
                                gray_cutoff: float | None = None, pair_colors: Sequence[ColorType] = MULTI_PAIR_COLORS,
                                intra_color: ColorType = MULTI_INTRA_COLOR,
@@ -627,8 +624,8 @@ class ContactPlotMixin(StructureState):
                                tick_size: float | None = None, tick_rotation: float = 0, xlabel: str | None = None,
                                ylabel: str | None = None, min_marker_pt: float = CONTACT_MAP_MIN_MARKER_PT,
                                show_color_legend: bool = False, show_distance_legend: bool = False,
-                               dpi: float = CONTACT_MAP_DPI, title: str | None = None, ax: Axes | None = None,
-                               save_path: PathLike | None = None) -> tuple[Figure | SubFigure, Axes]:
+                               dpi: float = CONTACT_MAP_DPI, title: str | None = None,
+                               ax: Axes | None = None) -> tuple[Figure | SubFigure, Axes]:
         """Plot several chains on one block contact map, with dashed chain boundaries and a square around each chain.
 
         Residue pairs up to gray_cutoff are drawn in gray by distance. Within cutoff, intra-chain contacts use
@@ -636,7 +633,7 @@ class ContactPlotMixin(StructureState):
         label the blocks along the top; plddt=True adds pLDDT bands along the top and left edges.
 
         Args:
-            chain_ids: Two or more different chains, standard or author IDs, in axis order.
+            chain_ids: Two or more different chains, keys, label IDs, or author IDs, in axis order.
             cutoff: Distance cutoff in nm for colored contacts.
             moieties: Biomolecule types to include.
             scheme: Contact scheme, 'ca' or 'sidechain'.
@@ -660,10 +657,9 @@ class ContactPlotMixin(StructureState):
             min_marker_pt: Smallest marker side in points.
             show_color_legend: Whether to draw the legend of intra-chain, chain-pair and pLDDT colors.
             show_distance_legend: Whether to draw the grayscale distance colorbar.
-            dpi: Figure resolution.
+            dpi: Figure resolution on screen; export_plot sets the saved resolution.
             title: Title, or None for a default.
             ax: Axes to draw on, or None to create a figure.
-            save_path: File to save the figure to, or None.
 
         Returns:
             (figure, axes).
@@ -727,8 +723,6 @@ class ContactPlotMixin(StructureState):
             _multi_legend(ax, names, pairs, pair_colors, intra_color, plddt, font_size)
         if show_distance_legend:
             _attached_colorbar(ax, background_scatter, "distance (nm)", font_size)
-        if save_path is not None:
-            fig.figure.savefig(save_path, dpi=dpi)
         return fig, ax
 
     def _draw_plddt_tracks(self, ax: Axes, keys: Sequence[str], n_total: int, marker_area: float) -> None:

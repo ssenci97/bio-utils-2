@@ -128,22 +128,18 @@ def test_rename_chains_keeps_author_map_and_sequence(sync):
         sync.rename_chains({"B": "C"})
 
 
-def test_rename_by_sequence_reports_unmatched(sync):
-    report = sync.rename_chains_by_sequence({"P": sync.get_sequence("B"), "Q": "WWWWWWWWWWWWWWW"})
-    statuses = dict(zip(report["new_chain_id"].fillna("-"), report["status"]))
-    assert statuses["P"] == "renamed"
-    assert statuses["Q"] == "unmatched_target"
-    assert "P" in sync.chain_ids
-    assert (report["status"] == "unmatched_chain").sum() == 2
+def test_rename_by_sequence_logs_unmatched(sync, log_records):
+    result = sync.rename_chains_by_sequence({"P": sync.get_sequence("B"), "Q": "WWWWWWWWWWWWWWW"})
+    assert result is sync
+    assert "P" in sync.chain_ids and "Q" not in sync.chain_ids
+    assert any("no chain matches target(s) Q" in message for message in log_records.messages)
 
 
 def test_sequence_matching_ignores_short_spurious_alignments(sync):
     protein = sync.get_sequence("A")
     found = sync.find_chains_by_sequence(protein[:20])
     assert found["auth_chain_id"].tolist() == ["A"]
-    report = sync.rename_chains_by_sequence({"ZF": protein})
-    renamed = report[report["status"] == "renamed"]
-    assert renamed[["new_chain_id", "old_auth_chain_id"]].values.tolist() == [["ZF", "A"]]
+    sync.rename_chains_by_sequence({"ZF": protein})
     assert sync["ZF"].chain_id == "C" and sync.get_sequence("ZF") == protein
 
 
@@ -160,6 +156,15 @@ def test_label_keys_and_pdb_input_warning(tmp_path, log_records):
     from_pdb = SyncedStructure.from_path(pdb, key_by="label")
     assert sorted(from_pdb.chain_ids) == sorted(SyncedStructure.from_path(CIF).chain_ids)
     assert any("key_by='label' is not available for PDB" in m for m in log_records.messages)
+
+
+def test_mapping_survives_later_chain_changes(sync):
+    sync.apply_reference_numbering(["A"])
+    numbered = dict(sync["A"].sequence_index_to_ref_index)
+    sync.set_reference_sequence("B", sync.get_reference_sequence("B"), remap=False)
+    sync.rename_chains({"C": "Z"}).renumber_chain("Z")
+    assert sync["A"].sequence_index_to_ref_index == numbered
+    assert sync["B"].sequence_index_to_ref_index == {}
 
 
 def test_remap_false_logs_missing_mapping(sync, log_records):

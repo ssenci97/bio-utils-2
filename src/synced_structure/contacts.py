@@ -1,22 +1,21 @@
-"""C-alpha and sidechain contact detection, contact strings, and contact summaries with standard and author chain IDs."""
+"""C-alpha and sidechain contact detection, contact strings, and contact summaries with label and author chain IDs."""
 
 from __future__ import annotations
 
 ###################################### IMPORTS AND CONSTANTS
 
 import warnings
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import mdtraj as md
 import numpy as np
 import pandas as pd
 
-from ._types import ChainRefs, Moieties, PathLike, Record
+from ._types import ChainRefs, Moieties, Record
 from .base import StructureState
 from .constants import (
-    ANGSTROM_PER_NM, BACKBONE_ATOMS, CONTACT_COLUMNS, CONTACT_SCHEMES, CONTACT_SEQUENCE_COLUMNS, CONTACT_TYPES,
-    CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, DEFAULT_CONTACT_TYPE, EXPORT_SEP, MD_SCHEMES, MOIETIES,
+    ANGSTROM_PER_NM, BACKBONE_ATOMS, CONTACT_COLUMNS, CONTACT_SCHEMES, CONTACT_TYPES,
+    CONTACTS_CUTOFF_NM, DEFAULT_CONTACT_MOIETIES, DEFAULT_CONTACT_TYPE, MD_SCHEMES, MOIETIES,
     MOIETY_NUCLEIC, MOIETY_PROTEIN, NUCLEIC_PHOSPHATE_ATOMS,
 )
 from .residues import is_heavy_atom, contact_point_coord
@@ -236,20 +235,19 @@ class ContactMixin(StructureState):
             if distance > cutoff:
                 continue
             a, b = records[int(i)], records[int(j)]
-            rows.append({
-                "chain_1": a["chain_id"], "auth_chain_1": a["auth_chain_id"], "resnum_1": a["resnum"],
-                "resname_1": a["resname"],
-                "sequence_index_1": None if a["sequence_index"] is None else a["sequence_index"] + 1,
-                "chain_2": b["chain_id"], "auth_chain_2": b["auth_chain_id"], "resnum_2": b["resnum"],
-                "resname_2": b["resname"],
-                "sequence_index_2": None if b["sequence_index"] is None else b["sequence_index"] + 1,
-                "min_distance_nm": round(float(distance), 4),
-                "contact_type": "intra" if a["key"] == b["key"] else "inter",
-                "moiety_1": a["moiety"],
-                "moiety_2": b["moiety"],
-            })
+            row: Record = {}
+            for side, record in (("a", a), ("b", b)):
+                index = record["sequence_index"]
+                row.update({f"chain_key_{side}": record["key"], f"chain_{side}": record["chain_id"],
+                            f"auth_chain_{side}": record["auth_chain_id"], f"resnum_{side}": record["resnum"],
+                            f"resname_{side}": record["resname"],
+                            f"sequence_index_{side}": None if index is None else index + 1,
+                            f"moiety_{side}": record["moiety"]})
+            row["min_distance_nm"] = round(float(distance), 4)
+            row["contact_type"] = "intra" if a["key"] == b["key"] else "inter"
+            rows.append(row)
         frame = pd.DataFrame(rows, columns=CONTACT_COLUMNS)
-        return frame.astype({"sequence_index_1": "Int64", "sequence_index_2": "Int64"})
+        return frame.astype({"sequence_index_a": "Int64", "sequence_index_b": "Int64"})
 
 ###################################### CONTACT STRINGS
 
@@ -300,7 +298,7 @@ class ContactMixin(StructureState):
         for record in self._contact_records([chain_id], moieties):
             if record["sequence_index"] is not None:
                 bits[record["sequence_index"]] = "0"
-        for side in ("1", "2"):
+        for side in ("a", "b"):
             indices = contacts.loc[contacts[f"chain_{side}"] == label, f"sequence_index_{side}"].dropna()
             for index in indices.astype(int):
                 bits[index - 1] = "1"
@@ -314,7 +312,7 @@ class ContactMixin(StructureState):
         Only polymer residues whose moiety is in moieties appear in the string.
 
         Args:
-            chain_id: Chain identifier.
+            chain_id: Chain key, label ID, or author ID.
             cutoff: Distance cutoff in nm, used if contacts is None.
             contact_type: Contact type, used if contacts is None.
             contacts: Precomputed contacts table, or None.
@@ -337,7 +335,7 @@ class ContactMixin(StructureState):
         contact and '0' otherwise, including residues without a contact point.
 
         Args:
-            chain_id: Chain identifier.
+            chain_id: Chain key, label ID, or author ID.
             cutoff: Distance cutoff in nm, used if contacts is None.
             contact_type: Contact type, used if contacts is None.
             contacts: Precomputed contacts table, or None.
@@ -371,7 +369,7 @@ class ContactMixin(StructureState):
         The result is aligned with contact_string: '1' positions keep their residue, '0' and 'X' become mask.
 
         Args:
-            chain_id: Chain identifier.
+            chain_id: Chain key, label ID, or author ID.
             cutoff: Distance cutoff in nm, used if contacts is None.
             contact_type: Contact type, used if contacts is None.
             contacts: Precomputed contacts table, or None.
@@ -396,7 +394,7 @@ class ContactMixin(StructureState):
         become mask.
 
         Args:
-            chain_id: Chain identifier.
+            chain_id: Chain key, label ID, or author ID.
             cutoff: Distance cutoff in nm, used if contacts is None.
             contact_type: Contact type, used if contacts is None.
             contacts: Precomputed contacts table, or None.
@@ -410,46 +408,3 @@ class ContactMixin(StructureState):
         chain_id = self._chain_key(chain_id)
         text = self.reference_contact_string(chain_id, cutoff, contact_type, contacts, scheme, moieties)
         return _masked(self.chains[chain_id].reference_sequence, text, mask)
-
-    def export_contact_strings(self, output_path: PathLike, cutoff: float = CONTACTS_CUTOFF_NM,
-                               contact_type: str = DEFAULT_CONTACT_TYPE, reference: bool = False,
-                               scheme: str = "ca", moieties: Moieties = DEFAULT_CONTACT_MOIETIES) -> Path:
-        """Write each chain's sequence and contact string to a TSV file.
-
-        Args:
-            output_path: Destination TSV path.
-            cutoff: Distance cutoff in nm.
-            contact_type: Contact type.
-            reference: Whether to use reference sequences, skipping chains without one.
-            scheme: Contact scheme ('ca' or 'sidechain').
-            moieties: Biomolecule types included in the output.
-
-        Returns:
-            The written path.
-        """
-        contacts = self.contact_table(cutoff=cutoff, contact_type=contact_type, scheme=scheme, moieties=moieties)
-        options: dict[str, Any] = {"cutoff": cutoff, "contact_type": contact_type, "contacts": contacts,
-                                   "scheme": scheme, "moieties": moieties}
-        rows = []
-        for chain_key, data in self.chains.items():
-            if reference:
-                if not data.reference_sequence:
-                    continue
-                sequence = data.reference_sequence
-                text = self.reference_contact_string(chain_key, **options)
-            else:
-                sequence = self._moiety_sequence(chain_key, moieties)
-                text = self.contact_string(chain_key, **options)
-            rows.append({
-                "structure_id": self.structure_id,
-                "chain_id": data.chain_id,
-                "auth_chain_id": data.auth_chain_id,
-                "sequence": sequence,
-                "contacts": text,
-                "contact_type": contact_type,
-                "mdtraj_scheme": scheme,
-                "cutoff_nm": cutoff,
-            })
-        path = self._prepare_path(output_path)
-        pd.DataFrame(rows, columns=CONTACT_SEQUENCE_COLUMNS).to_csv(path, sep=EXPORT_SEP, index=False)
-        return path

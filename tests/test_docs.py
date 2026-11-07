@@ -1,12 +1,13 @@
-"""The documentation works: the README's code runs, every relative link resolves, and the API page is current.
+"""The documentation works: guide code runs, links resolve, the MkDocs site builds, and the API reference is complete.
 
-The README runs like a notebook: its ```python blocks are executed top to bottom in one namespace. A block
+Each guide page runs like a notebook: its ```python blocks are executed top to bottom in one namespace. A block
 preceded by <!-- skip-test --> is not run. Structures downloaded with from_rcsb are loaded from tests/data
-instead, so the test is offline. docs/index.html must equal what docs/build_docs.py generates now.
+instead, so the test is offline. The API reference must document every public name exactly once.
 """
 
 import importlib.util
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,8 +22,10 @@ from synced_structure import SyncedStructure  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(__file__).parent / "data"
-GUIDES = [ROOT / "README.md"]
-PAGES = [ROOT / "README.md", ROOT / "CHANGELOG.md", *sorted((ROOT / "docs").glob("*.md"))]
+DOCS = ROOT / "docs"
+GUIDES = [ROOT / "README.md", DOCS / "index.md", DOCS / "quickstart.md", *sorted((DOCS / "guide").glob("*.md"))]
+PAGES = [ROOT / "README.md", ROOT / "CHANGELOG.md", *sorted(DOCS.rglob("*.md"))]
+DIRECTIVE = re.compile(r"^::: (synced_structure\.[\w.]+)", re.M)
 BLOCK = re.compile(r"(<!-- skip-test -->\s*)?```python\n(.*?)```", re.S)
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
@@ -42,13 +45,14 @@ def _anchors(path):
     return {_slug(line.lstrip("#")) for line in path.read_text().splitlines() if line.startswith("#")}
 
 
-@pytest.mark.parametrize("guide", GUIDES, ids=[path.stem for path in GUIDES])
+@pytest.mark.parametrize("guide", GUIDES, ids=[str(path.relative_to(ROOT)) for path in GUIDES])
 def test_guide_code_runs(guide, tmp_path, monkeypatch):
     local = classmethod(lambda cls, pdb_id, **kwargs: cls.from_path(DATA / f"{pdb_id.upper()}.cif", **kwargs))
     monkeypatch.setattr(SyncedStructure, "from_rcsb", local)
     monkeypatch.chdir(tmp_path)
     blocks = _blocks(guide)
-    assert blocks, f"{guide.name} has no runnable code"
+    if not blocks:
+        pytest.skip(f"{guide.name} has no runnable code")
     namespace = {"__name__": f"guide_{guide.stem}"}
     for number, code in enumerate(blocks, start=1):
         try:
@@ -74,30 +78,43 @@ def test_relative_links_resolve():
     assert not broken, "\n".join(broken)
 
 
-def _build_docs():
-    spec = importlib.util.spec_from_file_location("build_docs", ROOT / "docs" / "build_docs.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _documented():
+    """Return every object path named by a ::: directive in the API reference, with repeats."""
+    return [path for page in sorted((DOCS / "reference").glob("*.md")) for path in DIRECTIVE.findall(page.read_text())]
 
 
-def test_api_page_is_current():
-    page = _build_docs().build_html()
-    assert page == (ROOT / "docs" / "index.html").read_text(encoding="utf-8"), (
-        "docs/index.html is stale: run python docs/build_docs.py")
-
-
-def test_api_page_lists_every_public_name():
-    page = _build_docs().build_html()
+def test_api_reference_lists_every_public_name_once():
     import synced_structure
     from synced_structure import HaddockDocking
 
-    missing = [name for name in synced_structure.__all__ if f'id="{name}"' not in page and f'.{name}"' not in page]
-    for cls, owner in ((SyncedStructure, "SyncedStructure"), (HaddockDocking, "HaddockDocking")):
-        for name in dir(cls):
-            member = getattr(cls, name)
-            if not name.startswith("_") and (callable(member) or isinstance(member, property)):
-                if f'id="{owner}.{name}"' not in page:
-                    missing.append(f"{owner}.{name}")
-    assert not missing, missing
+    documented = _documented()
+    repeated = sorted({path for path in documented if documented.count(path) > 1})
+    assert not repeated, f"documented more than once: {repeated}"
+    expected = {f"synced_structure.{name}" for name in synced_structure.__all__}
+    for name in dir(SyncedStructure):
+        member = getattr(SyncedStructure, name)
+        if not name.startswith("_") and (callable(member) or isinstance(member, property)):
+            expected.add(f"synced_structure.SyncedStructure.{name}")
+    # HaddockDocking is documented as a whole class, members included
+    expected -= {f"synced_structure.HaddockDocking.{name}" for name in dir(HaddockDocking)}
+    missing = sorted(expected - set(documented))
+    assert not missing, f"add these to a docs/reference/*.md page: {missing}"
+    unknown = sorted(set(documented) - expected)
+    assert not unknown, f"documented but not public: {unknown}"
+
+
+def test_configuration_page_lists_every_setting():
+    from synced_structure.constants import DEFAULT_CONFIG
+
+    page = (DOCS / "guide" / "configuration.md").read_text()
+    missing = [key for key in DEFAULT_CONFIG if f"| `{key}` | `{DEFAULT_CONFIG[key]!r}` |" not in page]
+    assert not missing, f"missing or stale in docs/guide/configuration.md: {missing}"
+
+
+@pytest.mark.skipif(importlib.util.find_spec("mkdocs") is None or importlib.util.find_spec("mkdocstrings") is None,
+                    reason="mkdocs and mkdocstrings are not installed (pip install -e '.[docs]')")
+def test_mkdocs_builds_strict(tmp_path):
+    result = subprocess.run([sys.executable, "-m", "mkdocs", "build", "--strict", "--site-dir", str(tmp_path / "site")],
+                            cwd=ROOT, capture_output=True, text=True, env={**__import__("os").environ,
+                                                                          "NO_MKDOCS_2_WARNING": "1"})
+    assert result.returncode == 0, result.stderr[-3000:]

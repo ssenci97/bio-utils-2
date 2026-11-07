@@ -676,9 +676,12 @@ class HaddockDocking:
         log_info(f"HADDOCK3: moved {len(placements)} partner(s) apart with random rotations (seed {self.seed}).")
         return placements
 
-    @property
     def residue_table(self) -> pd.DataFrame:
-        """One row per written residue: partner, segment ID, HADDOCK3 number, and the original numbering."""
+        """Return one row per written residue: partner, segment ID, HADDOCK3 number, and the original numbering.
+
+        Returns:
+            One row per residue written to the partner PDB files.
+        """
         rows = []
         for (index, key), entries in self._chains.items():
             partner = self.partners[index]
@@ -978,13 +981,12 @@ class HaddockDocking:
         source, resolved = self._contact_source(source, chain_map)
         contacts = source.contact_table(cutoff=cutoff, contact_type="inter", chain_ids=list(resolved),
                                            scheme=scheme, moieties=POLYMER_MOIETIES)
-        key_of = {record.chain_id: key for key, record in source.chains.items()}
         pairs: dict[tuple[ChainTarget, ChainTarget], list[tuple[int, int]]] = {}
         dropped = 0
-        columns = (contacts[name].tolist() for name in ("chain_1", "sequence_index_1", "chain_2", "sequence_index_2"))
-        for chain_1, index_1, chain_2, index_2 in zip(*columns):
-            key_1, seq_1 = key_of[chain_1], int(index_1) - 1
-            key_2, seq_2 = key_of[chain_2], int(index_2) - 1
+        columns = (contacts[name].tolist() for name in ("chain_key_a", "sequence_index_a", "chain_key_b",
+                                                         "sequence_index_b"))
+        for key_1, index_1, key_2, index_2 in zip(*columns):
+            seq_1, seq_2 = int(index_1) - 1, int(index_2) - 1
             target_1, target_2 = resolved[key_1], resolved[key_2]
             if target_1[0] == target_2[0]:
                 continue
@@ -1082,9 +1084,12 @@ class HaddockDocking:
         self._patches.clear()
         return self
 
-    @property
     def restraint_table(self) -> pd.DataFrame:
-        """One row per restraint set with segment IDs, HADDOCK3 residue numbers, and distance."""
+        """Return one row per restraint set with segment IDs, HADDOCK3 residue numbers, and distance.
+
+        Returns:
+            One row per restraint set.
+        """
         rows = [{
             "kind": item["kind"], "origin": item["origin"],
             "segid_a": self.partners[item["partner_a"]]["segid"], "residues_a": item["residues_a"],
@@ -1094,9 +1099,12 @@ class HaddockDocking:
         } for item in self._restraints]
         return pd.DataFrame(rows, columns=HADDOCK_RESTRAINT_COLUMNS)
 
-    @property
     def contact_patch_table(self) -> pd.DataFrame:
-        """Contact patches behind unambiguous contact restraints, in HADDOCK3 residue numbers."""
+        """Return contact patches behind unambiguous contact restraints, in HADDOCK3 residue numbers.
+
+        Returns:
+            One row per contact patch.
+        """
         return pd.DataFrame(self._patches, columns=HADDOCK_PATCH_COLUMNS)
 
     def restraint_text(self, kind: str) -> str:
@@ -1380,7 +1388,7 @@ class HaddockDocking:
                 self._validate_tbl(text, restraint_path)
             elif restraint_path.exists():
                 restraint_path.unlink()
-        self.residue_table.to_csv(paths["haddock_residue_map"], sep=EXPORT_SEP, index=False)
+        self.residue_table().to_csv(paths["haddock_residue_map"], sep=EXPORT_SEP, index=False)
         paths["config"].write_text(config)
         log_completion(start, f"Wrote HADDOCK3 '{self.method}' set up in {self.workdir}")
         return paths["config"]
