@@ -1,14 +1,12 @@
 # synced_structure
 
-[![docs](https://github.com/ssenci97/bio-utils-2/actions/workflows/docs.yml/badge.svg)](https://ssenci97.github.io/bio-utils-2/)
-
 A Biopython structure wrapper that keeps every observed residue linked to its position in the reference sequence, and builds contacts, contact maps, interface metrics, HADDOCK3 dockings, tables and 3D views on top of that link.
 
-## 📖 Documentation: <https://ssenci97.github.io/bio-utils-2/>
+## 📖 Documentation: [`docs/`](docs/)
 
-[Quick start](https://ssenci97.github.io/bio-utils-2/quickstart/) · [Concepts](https://ssenci97.github.io/bio-utils-2/guide/concepts/) · [API reference](https://ssenci97.github.io/bio-utils-2/reference/) · [HADDOCK3 docking](https://ssenci97.github.io/bio-utils-2/guide/docking/) · [Changelog](CHANGELOG.md) · [Development](docs/development.md)
+[Quick start](docs/quickstart.md) · [Concepts](docs/guide/concepts.md) · [API reference](docs/reference/index.md) · [HADDOCK3 docking](docs/guide/docking.md) · [Changelog](CHANGELOG.md) · [Development](docs/development.md)
 
-The same pages are in [`docs/`](docs/) and can be previewed locally with `pip install -e ".[docs]" && mkdocs serve`.
+The site can be built and previewed locally with `pip install -e ".[docs]" && mkdocs serve`.
 
 ## Installation
 
@@ -49,3 +47,5 @@ A complete script that writes every table, contact map and a 3D page is in [`exa
 ```bash
 python examples/export_all.py      # writes to examples/output/
 ```
+
+[`examples/dock_1kxp.py`](examples/dock_1kxp.py) re-docks actin and vitamin D-binding protein (1KXP) with HADDOCK3 and compares the models with the crystal (needs the `haddock` extra; writes to `examples/output/docking_1KXP/`).

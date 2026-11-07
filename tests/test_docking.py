@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 from Bio.PDB import PDBParser
 
@@ -16,7 +17,7 @@ from synced_structure.constants import HADDOCK_PRESETS, HADDOCK_SEEDED_MODULES
 from synced_structure.docking import cluster_contact_patches
 
 CIF = Path(__file__).parent / "data" / "1AAY.cif"
-LOW_THROUGHPUT = {"rigidbody": {"sampling": 4}, "seletop": {"select": 2}}
+LOW_THROUGHPUT = {"rigidbody": {"sampling": 8}, "clustfcc": {"min_population": 1}}
 
 
 @pytest.fixture
@@ -206,7 +207,7 @@ def _validate(text):
 def test_preset_modules_seed_and_restraints(sync, tmp_path):
     for method in HADDOCK_PRESETS:
         setup = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / method, method=method, seed=42)
-        if method == "eval":
+        if method == "targeted":
             setup.add_patch_pair_restraints([(("A", [20, 23]), ("B", [3, 4]))])
         config = _config(setup)
         modules = [name for name, _ in HADDOCK_PRESETS[method]] + ["caprieval"]
@@ -218,25 +219,27 @@ def test_preset_modules_seed_and_restraints(sync, tmp_path):
         assert len(config["molecules"]) == 2 and config["run_dir"].endswith("run")
     abinitio = _config(sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "a"))
     assert abinitio["rigidbody"] == {"sampling": 10000, "cmrest": True, "ranair": True, "iniseed": 917}
-    assert abinitio["seletop"]["select"] == 200 and abinitio["emref"]["contactairs"] is True
-    assert abinitio["seletopclusts"]["top_clusters"] == 10 and "clustfcc" in abinitio
+    assert abinitio["emref"]["contactairs"] is True and abinitio["seletopclusts"] == {"top_models": 4}
     oracle = _config(sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "o", method="oracle"))
-    assert oracle["rigidbody"]["sampling"] == 200 and oracle["seletop"]["select"] == 10
+    assert oracle["rigidbody"]["sampling"] == 200 and "top_clusters" not in oracle["seletopclusts"]
+    for config in (abinitio, oracle):
+        assert [key for key in config if isinstance(config[key], dict)][-4:] == [
+            "clustfcc", "seletopclusts", "emref", "caprieval"]
     assert oracle["rigidbody"]["unambig_fname"] == oracle["emref"]["unambig_fname"]
     assert "ambig_fname" not in oracle["rigidbody"]
 
 
-def test_eval_uses_patch_pairs_as_ambiguous(sync, tmp_path):
-    setup = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path, method="eval")
+def test_targeted_uses_patch_pairs_as_ambiguous(sync, tmp_path):
+    setup = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path, method="targeted")
     with pytest.raises(ValueError):
         setup.config_toml()
     setup.add_patch_pair_restraints([(("A", [20, 23]), ("B", [3, 4]))])
     config = _config(setup)
     assert config["rigidbody"]["ambig_fname"].endswith("ambig.tbl") and "unambig_fname" not in config["rigidbody"]
-    no_reference = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path, method="eval", reference=None)
+    no_reference = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path, method="targeted", reference=None)
     no_reference.add_patch_pair_restraints([(("A", [20]), ("B", [3]))])
-    with pytest.raises(ValueError):
-        no_reference.config_toml()
+    capri = _config(no_reference)["caprieval"]
+    assert "reference_fname" not in capri and capri["receptor_chain"] == "A"
 
 
 def test_overrides_and_guards(sync, tmp_path):
@@ -244,7 +247,7 @@ def test_overrides_and_guards(sync, tmp_path):
                                  module_params=LOW_THROUGHPUT, global_params={"debug": True}, caprieval=False)
     setup.add_ambiguous_restraints("A", [20], "B", [3])
     config = _config(setup)
-    assert config["rigidbody"]["sampling"] == 4 and config["seletop"]["select"] == 2
+    assert config["rigidbody"]["sampling"] == 8 and config["clustfcc"]["min_population"] == 1
     assert config["rigidbody"]["ranair"] is False and config["rigidbody"]["cmrest"] is True
     assert config["emref"]["ambig_fname"] == config["rigidbody"]["ambig_fname"]
     assert config["debug"] is True and config["ncores"] == 2 and "caprieval" not in config
@@ -307,6 +310,101 @@ def test_run_guards(setup):
     missing = HaddockDocking(partners, setup.workdir / "x", haddock3_exe="/nonexistent/haddock3")
     with pytest.raises(FileNotFoundError):
         missing.validate_config()
+
+
+
+def test_model_counts(setup):
+    modules = ["topoaa", "rigidbody", "clustfcc", "seletopclusts", "emref", "caprieval"]
+    assert [name for name, _ in setup.workflow_modules()] == modules
+    assert setup._model_counts() == [2, 200, 0, 0, None, 0]       # emref is unknown until clusters are counted
+    setup._top_clusters = 5
+    assert setup._model_counts() == [2, 200, 0, 0, 20, 0]
+    assert setup._cluster_split() == 3
+
+
+def test_top_cluster_count(setup, monkeypatch):
+    for found, top in ((1, 1), (3, 3), (5, 5), (12, 5), (25, 5), (26, 6), (100, 20)):
+        table = pd.DataFrame({"cluster_id": list(range(1, found + 1)) + [None]})
+        monkeypatch.setattr(setup, "score_table", lambda step, table=table: table)
+        assert setup._top_cluster_count(2) == top
+    monkeypatch.setattr(setup, "score_table", lambda step: pd.DataFrame({"cluster_id": [None]}))
+    with pytest.raises(RuntimeError, match="no clusters"):
+        setup._top_cluster_count(2)
+    fixed = setup.__class__([(p["structure"], p["keys"]) for p in setup.partners], setup.workdir / "f",
+                            method="oracle", module_params={"seletopclusts": {"top_clusters": 3}})
+    assert fixed._cluster_split() is None and fixed._model_counts()[4] == 12
+
+
+FAKE_HADDOCK3 = """#!/bin/sh
+# stands in for haddock3: logs like it and writes model files step by step
+cd "$(dirname "$1")"
+for step in 0_topoaa 1_rigidbody 2_clustfcc 3_seletopclusts 4_emref 5_caprieval; do
+    name=${step#*_}
+    echo "[INFO] Running [$name] module"
+    mkdir -p run/$step
+    case $name in
+        topoaa) n=2 ;; rigidbody) n=8 ;; emref) n=4 ;; *) n=0 ;;
+    esac
+    i=1
+    while [ $i -le $n ]; do touch run/$step/${name}_$i.pdb; i=$((i + 1)); sleep 0.05; done
+    echo "[INFO] Module [$name] finished."
+done
+exit ${FAKE_EXIT:-0}
+"""
+
+
+def test_run_progress(sync, tmp_path, caplog, monkeypatch):
+    import synced_structure.docking as docking
+
+    monkeypatch.setattr(docking, "HADDOCK_POLL_SECONDS", 0.02)
+    monkeypatch.setattr(docking, "HADDOCK_PROGRESS_SECONDS", 0.0)
+    exe = tmp_path / "haddock3"
+    exe.write_text(FAKE_HADDOCK3)
+    exe.chmod(0o755)
+    params = {**LOW_THROUGHPUT, "seletopclusts": {"top_clusters": 1}}       # one haddock3 call, no restart
+    setup = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "dock", method="oracle",
+                                         module_params=params, haddock3_exe=exe)
+    with caplog.at_level("INFO"):
+        setup.run_haddock()
+    lines = [record.getMessage() for record in caplog.records if record.getMessage().startswith("HADDOCK3 [")]
+    modules = ["topoaa", "rigidbody", "clustfcc", "seletopclusts", "emref", "caprieval"]
+    for index, name in enumerate(modules, start=1):
+        assert any(line.startswith(f"HADDOCK3 [{index}/6] {name} started") for line in lines)
+        assert any(line.startswith(f"HADDOCK3 [{index}/6] {name} finished in") for line in lines)
+    assert any(line.startswith("HADDOCK3 [2/6] rigidbody: 8/8 models") for line in lines)
+    assert any(line.startswith("HADDOCK3 [5/6] emref: 4/4 models") for line in lines)
+    assert not any("clustfcc:" in line or "seletopclusts:" in line for line in lines)
+    monkeypatch.setenv("FAKE_EXIT", "3")
+    with pytest.raises(RuntimeError, match="exited with code 3"):
+        setup.run_haddock(overwrite=True, progress=False)
+
+
+def test_interrupt_stops_haddock3(sync, tmp_path, monkeypatch):
+    import os
+    import time
+
+    exe = tmp_path / "haddock3"
+    exe.write_text('#!/bin/sh\necho $$ > "$(dirname "$1")/pid"\nexec sleep 60\n')
+    exe.chmod(0o755)
+    setup = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "dock", method="oracle",
+                                         module_params={"seletopclusts": {"top_clusters": 1}}, haddock3_exe=exe)
+
+    def interrupt(process, log_path, offset=0):
+        while not (setup.workdir / "pid").is_file():
+            time.sleep(0.02)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(setup, "_watch_run", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        setup.run_haddock()
+    pid = int((setup.workdir / "pid").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+def test_duration():
+    from synced_structure.docking import _duration
+
+    assert [_duration(s) for s in (4.4, 185, 3725)] == ["4s", "3m05s", "1h02m"]
 
 
 # results of a finished run, read from a run directory laid out like haddock3's
@@ -400,7 +498,7 @@ needs_haddock = pytest.mark.skipif(shutil.which("haddock3") is None, reason="had
 def test_haddock_validates_every_method(sync, tmp_path):
     for method in HADDOCK_PRESETS:
         setup = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / method, method=method, ncores=2)
-        if method == "eval":
+        if method == "targeted":
             setup.add_patch_pair_restraints([(("A", [20, 23, 26]), ("B", [3, 4, 5]))])
         setup.validate_config()
         assert not (setup.workdir / "setup_check").exists()
@@ -411,23 +509,32 @@ def test_haddock_validates_every_method(sync, tmp_path):
 
 @pytest.mark.haddock
 @needs_haddock
-def test_haddock_oracle_run(sync, tmp_path):
+def test_haddock_oracle_run(sync, tmp_path, caplog):
     setup = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path, method="oracle", seed=7, ncores=2,
                                  module_params=LOW_THROUGHPUT)
     setup.add_contact_restraints(kind="unambiguous", scheme="sidechain", cutoff=0.45)
-    setup.run_haddock()
+    with caplog.at_level("INFO"):
+        setup.run_haddock()
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(message.startswith("HADDOCK3 [2/6] rigidbody: 8/8 models") for message in messages)
+    assert sum(" started | run " in message for message in messages) == 6
+    assert any(message.startswith("HADDOCK3 [6/6] caprieval finished in") for message in messages)
+    clusters = setup.score_table("clustfcc")["cluster_id"].nunique()
+    assert setup._top_clusters == min(clusters, 5)
+    selected, emref = setup.score_table("seletopclusts"), setup.score_table("emref")
+    assert len(emref) == len(selected) <= 4 * setup._top_clusters
+    assert any(message.startswith(f"HADDOCK3 [5/6] emref: {len(emref)}/{len(emref)} models") for message in messages)
     models = setup.caprieval_tables()["models"]
-    assert len(models) == 2 and {"irmsd", "fnat", "dockq"} <= set(models)
+    assert len(models) == len(emref) and {"irmsd", "fnat", "dockq"} <= set(models)
     assert models["reference"].eq("reference.pdb").all()
     assert all(path.is_file() for path in setup.docked_model_paths())
-    rigid, emref = setup.score_table("rigidbody"), setup.score_table("emref")
-    assert len(rigid) == 4 and len(emref) == 4 and emref["origin"].str.startswith("rigidbody_").all()
+    assert len(setup.score_table("rigidbody")) == 8 and emref["origin"].str.startswith("cluster_").all()
     assert setup.score_table()["model"].tolist() == [path.name.removesuffix(".gz") for path in setup.docked_model_paths()]
     docked_table = setup.docked_model_table()
     assert docked_table["path"].tolist() == setup.docked_model_paths() and {"seed", "origin", "dockq"} <= set(docked_table)
     assert len(setup.load_docked_models(top=2)) == 2
     analysed = setup.run_caprieval(["rigidbody"])["1_rigidbody"]["models"]
-    assert len(analysed) == 4 and analysed["path"].map(Path.is_file).all()
+    assert len(analysed) == 8 and analysed["path"].map(Path.is_file).all()
     assert setup.caprieval_tables("rigidbody")["models"]["reference"].eq("reference.pdb").all()
     docked = setup.load_docked_model(0)
     assert sorted(docked.chain_ids) == ["A", "B", "C"]
@@ -439,8 +546,7 @@ def test_haddock_oracle_run(sync, tmp_path):
 @needs_haddock
 def test_haddock_abinitio_run(sync, tmp_path):
     setup = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path, method="ab-initio", seed=3, ncores=2,
-                                 module_params={"rigidbody": {"sampling": 8}, "seletop": {"select": 4},
-                                                "clustfcc": {"min_population": 1}})
+                                 module_params=LOW_THROUGHPUT)
     setup.run_haddock()
     tables = setup.caprieval_tables()
     assert {"models", "clusters"} <= set(tables) and tables["models"]["cluster_id"].notna().all()

@@ -15,6 +15,7 @@ import importlib.util
 import io
 import itertools
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -40,10 +41,12 @@ from .chains import ChainMixin
 from .constants import (
     CONTACTS_CUTOFF_NM, EXPORT_SEP, HADDOCK_ANALYSE_EXECUTABLE, HADDOCK_CHAIN_GAP, HADDOCK_CLEARANCE_A,
     HADDOCK_DEFAULT_SEED, HADDOCK_EXECUTABLE, HADDOCK_MAX_RESID, HADDOCK_METHODS, HADDOCK_NUMBERINGS,
-    HADDOCK_PATCH_COLUMNS, HADDOCK_PATCH_GAP, HADDOCK_PLACEMENT_GROWTH, HADDOCK_PLACEMENT_TRIALS, HADDOCK_PRESETS,
-    HADDOCK_PROTECTED_GLOBALS, HADDOCK_RESIDUE_MAP_COLUMNS, HADDOCK_RESTRAINT_COLUMNS, HADDOCK_RESTRAINT_DISTANCE,
+    HADDOCK_DEFAULT_SAMPLING, HADDOCK_DEFAULT_SELECT, HADDOCK_DEFAULT_TOP_MODELS, HADDOCK_MIN_TOP_CLUSTERS,
+    HADDOCK_PATCH_COLUMNS, HADDOCK_PATCH_GAP,
+    HADDOCK_PLACEMENT_GROWTH, HADDOCK_PLACEMENT_TRIALS, HADDOCK_POLL_SECONDS, HADDOCK_PRESETS, HADDOCK_PROGRESS_SECONDS,
+    HADDOCK_PROTECTED_GLOBALS, HADDOCK_REFINE_MODULES, HADDOCK_RESIDUE_MAP_COLUMNS, HADDOCK_RESTRAINT_COLUMNS, HADDOCK_RESTRAINT_DISTANCE,
     HADDOCK_RESTRAINT_KINDS, HADDOCK_RESTRAINT_MODULES, HADDOCK_SCORE_COLUMNS, HADDOCK_SEEDED_MODULES, HADDOCK_SEGIDS,
-    HADDOCK_TBL_TERMS_PER_LINE, POLYMER_MOIETIES,
+    HADDOCK_TBL_TERMS_PER_LINE, HADDOCK_TOP_CLUSTER_FRACTION, POLYMER_MOIETIES,
 )
 from .residues import is_heavy_atom
 from .utils import log_completion, log_info
@@ -322,6 +325,22 @@ def _tbl_selection(segid: str, resids: Iterable[int], indent: str = "       ") -
     return f"(segid {segid} and\n{indent}  ({body}))"
 
 
+def _duration(seconds: float) -> str:
+    """Format a duration such as '1h02m', '3m05s' or '42s'.
+
+    Args:
+        seconds: Duration in seconds.
+
+    Returns:
+        The formatted duration.
+    """
+    minutes, secs = divmod(round(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    return f"{minutes}m{secs:02d}s" if minutes else f"{secs}s"
+
+
 def _log_tail(path: PathLike, lines: int = LOG_TAIL_LINES) -> str:
     """Return the last lines of a log file.
 
@@ -455,7 +474,7 @@ class HaddockDocking:
     numbering, and are written in HADDOCK3 numbering through the residue map.
 
     Attributes:
-        method: Workflow preset, 'ab-initio', 'oracle', or 'eval'.
+        method: Workflow preset, 'ab-initio', 'oracle', or 'targeted'.
         seed: Random seed of every CNS module and of the partner placement.
         ncores: Number of cores haddock3 may use.
         workdir: Directory holding inputs, restraints, config, logs, and the run.
@@ -485,6 +504,7 @@ class HaddockDocking:
     _restraints: list[Restraint]
     _patches: list[Record]
     _chains: dict[ChainTarget, list[ResidueEntry]]
+    _top_clusters: int | None
 
     def __init__(self, partners: Iterable[PartnerSpec], workdir: PathLike, method: str = "ab-initio",
                  seed: int = HADDOCK_DEFAULT_SEED, ncores: int = 4, separate: str | bool = "auto",
@@ -496,7 +516,7 @@ class HaddockDocking:
         Args:
             partners: (SyncedStructure, chain or list of chains) pairs, one per rigid body.
             workdir: Directory for inputs, restraints, config, log, and the run directory 'run'.
-            method: 'ab-initio', 'oracle', or 'eval'.
+            method: 'ab-initio', 'oracle', or 'targeted'.
             seed: Random seed, used as iniseed in every CNS module and for the placement of partners.
             ncores: Number of cores haddock3 may use.
             separate: 'auto' moves partners apart when two share a structure ID; True or False forces it.
@@ -504,7 +524,7 @@ class HaddockDocking:
             module_params: {module: {parameter: value}} overriding the preset of each module.
             global_params: Top-level haddock3 parameters, such as mode or max_cpus.
             reference: 'auto' (the input complex when all partners share a structure ID), a PDB path, or None.
-            caprieval: Whether to end with caprieval; 'eval' always does.
+            caprieval: Whether to end with caprieval, against the reference or, without one, the best-scoring model.
             haddock3_exe: Path to the haddock3 executable, or None to search the PATH and this Python's bin directory.
 
         Raises:
@@ -526,6 +546,7 @@ class HaddockDocking:
         self._reference = reference
         self._restraints = []
         self._patches = []
+        self._top_clusters = None
         self.partners = self._normalize_partners(partners)
         self._chains = self._assign_numbering()
         structure_ids = [partner["structure"].structure_id for partner in self.partners]
@@ -1208,16 +1229,16 @@ class HaddockDocking:
             raise ValueError(f"global_params cannot set {sorted(protected)}; they are managed by HaddockDocking.")
 
     def _ensure_method_restraints(self) -> None:
-        """Add the restraints a method needs by default: contact patches for 'oracle', a check for 'eval'.
+        """Add the restraints a method needs by default: contact patches for 'oracle', a check for 'targeted'.
 
         Raises:
-            ValueError: If 'eval' has no patch couples.
+            ValueError: If 'targeted' has no patch couples.
         """
         if self.method == "oracle" and not self._restraints:
             log_info("HADDOCK3: oracle without restraints; adding unambiguous contact-patch restraints.")
             self.add_contact_restraints(kind="unambiguous")
-        if self.method == "eval" and not any(item["origin"] == "patch_pair" for item in self._restraints):
-            raise ValueError("The 'eval' method needs patch couples; add them with add_patch_pair_restraints().")
+        if self.method == "targeted" and not any(item["origin"] == "patch_pair" for item in self._restraints):
+            raise ValueError("The 'targeted' method needs patch couples; add them with add_patch_pair_restraints().")
 
     def _reference_path(self) -> Path | None:
         """Return the reference complex for caprieval and run_caprieval().
@@ -1243,19 +1264,14 @@ class HaddockDocking:
         """Return caprieval parameters.
 
         Without a reference, caprieval compares every model with the best-scoring one, so scores are always
-        tabulated; 'eval' needs a real reference.
+        tabulated.
 
         Returns:
             The parameters, or None when caprieval is off.
-
-        Raises:
-            ValueError: If 'eval' has no reference.
         """
-        if not self.caprieval and self.method != "eval":
+        if not self.caprieval:
             return None
         reference = self._reference_path()
-        if reference is None and self.method == "eval":
-            raise ValueError("The 'eval' method ends with caprieval and needs a reference structure.")
         params: dict[str, Any] = {"receptor_chain": self.partners[0]["segid"],
                                   "ligand_chains": [partner["segid"] for partner in self.partners[1:]]}
         if reference is None:
@@ -1266,6 +1282,8 @@ class HaddockDocking:
 
     def workflow_modules(self) -> list[tuple[str, dict[str, Any]]]:
         """Return the workflow with seed, restraints, and overrides applied.
+
+        seletopclusts gets its top_clusters from the clustfcc step of the run, once run_haddock() has counted them.
 
         Returns:
             (module, parameters) pairs in workflow order.
@@ -1284,6 +1302,8 @@ class HaddockDocking:
                 log_info("HADDOCK3: ambiguous restraints given; rigidbody ranair is turned off to use them.")
                 params["ranair"] = False
             params.update(self.module_params.get(name, {}))
+            if name == "seletopclusts" and "top_clusters" not in params and self._top_clusters is not None:
+                params["top_clusters"] = self._top_clusters
             if name in HADDOCK_SEEDED_MODULES:
                 params["iniseed"] = self.seed
             workflow.append((name, params))
@@ -1293,11 +1313,12 @@ class HaddockDocking:
             workflow.append(("caprieval", capri))
         return workflow
 
-    def config_toml(self, run_dir: PathLike | None = None) -> str:
+    def config_toml(self, run_dir: PathLike | None = None, stop: int | None = None) -> str:
         """Return the haddock3 TOML configuration.
 
         Args:
             run_dir: Run directory to write in the config, or None for workdir/run.
+            stop: Number of workflow modules to write, or None for all.
 
         Returns:
             The TOML text.
@@ -1307,7 +1328,7 @@ class HaddockDocking:
                     "ncores": self.ncores, "mode": "local", **self.global_params}
         lines = [f"# HADDOCK3 configuration written by synced_structure (method: {self.method}, seed: {self.seed})"]
         lines += [f"{name} = {_toml_literal(value)}" for name, value in globals_.items()]
-        for name, params in self.workflow_modules():
+        for name, params in self.workflow_modules()[:stop]:
             lines += ["", f"[{name}]"] + [f"{key} = {_toml_literal(value)}" for key, value in params.items()]
         return "\n".join(lines) + "\n"
 
@@ -1418,22 +1439,151 @@ class HaddockDocking:
         raise FileNotFoundError(f"{name} executable not found; install haddock3 with 'pip install haddock3' "
                                 "or pass haddock3_exe=.")
 
-    def _run_command(self, args: Sequence[str], log_path: Path, name: str = HADDOCK_EXECUTABLE) -> None:
+    def _run_command(self, args: Sequence[str], log_path: Path, name: str = HADDOCK_EXECUTABLE,
+                     progress: bool = False, append: bool = False) -> None:
         """Run a haddock3 command, writing its output to a log file.
+
+        The command is stopped if Python is interrupted while it runs.
 
         Args:
             args: Command-line arguments.
             log_path: Log file for stdout and stderr.
             name: Command name.
+            progress: Whether to log module starts, finishes, and model counts while the command runs.
+            append: Whether to append to the log file instead of replacing it.
 
         Raises:
             RuntimeError: If the command exits with a nonzero code.
         """
-        with open(log_path, "w") as handle:
-            process = subprocess.run([self._find_executable(name), *args], cwd=self.workdir, stdout=handle,
-                                     stderr=subprocess.STDOUT)
+        offset = log_path.stat().st_size if append and log_path.is_file() else 0
+        with open(log_path, "a" if append else "w") as handle:
+            process = subprocess.Popen([self._find_executable(name), *args], cwd=self.workdir, stdout=handle,
+                                       stderr=subprocess.STDOUT)
+            try:
+                if progress:
+                    self._watch_run(process, log_path, offset)
+                process.wait()
+            finally:
+                if process.poll() is None:          # Python was interrupted: stop haddock3 too
+                    process.terminate()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
         if process.returncode != 0:
             raise RuntimeError(f"{name} exited with code {process.returncode}; see {log_path}\n{_log_tail(log_path)}")
+
+    def _model_counts(self) -> list[int | None]:
+        """Return how many models each step of the workflow writes, as far as the configuration tells.
+
+        Returns:
+            One count per module of workflow_modules(), 0 for steps that write no models, None when unknown. After
+            seletopclusts the count is an upper bound: clusters can have fewer than top_models members.
+        """
+        counts: list[int | None] = []
+        flowing: int | None = len(self.partners)
+        for name, params in self.workflow_modules():
+            if name == "topoaa":
+                counts.append(len(self.partners))
+            elif name in HADDOCK_DEFAULT_SAMPLING:
+                flowing = int(params.get("sampling", HADDOCK_DEFAULT_SAMPLING[name]))
+                counts.append(flowing)
+            elif name in HADDOCK_REFINE_MODULES:
+                flowing = None if flowing is None else flowing * int(params.get("sampling_factor", 1))
+                counts.append(flowing)
+            else:
+                if name == "seletop" and flowing is not None:
+                    flowing = min(flowing, int(params.get("select", HADDOCK_DEFAULT_SELECT)))
+                elif name == "seletopclusts":
+                    top = params.get("top_clusters")
+                    flowing = None if top is None else int(top) * int(params.get("top_models", HADDOCK_DEFAULT_TOP_MODELS))
+                elif name not in ("clustfcc", "caprieval"):
+                    flowing = None
+                counts.append(0)
+        return counts
+
+    def _step_model_count(self, step: int, params: Mapping[str, Any]) -> int | None:
+        """Return how many models a refinement step writes, from the models the previous step passed on.
+
+        Args:
+            step: Number of the previous step.
+            params: Parameters of the refinement module.
+
+        Returns:
+            The count, or None when the previous step's output cannot be read.
+        """
+        try:
+            return len(self.score_table(step)) * int(params.get("sampling_factor", 1))
+        except (FileNotFoundError, KeyError, ValueError):
+            return None
+
+    def _watch_run(self, process: subprocess.Popen[bytes], log_path: Path, offset: int = 0) -> None:
+        """Log progress of a running haddock3 workflow until it exits.
+
+        Module starts and finishes come from the haddock3 log; model counts from the PDB files in the step folder.
+
+        Args:
+            process: The running haddock3 process.
+            log_path: Log file the process writes to.
+            offset: Position in the log file where this process's output starts.
+        """
+        workflow = self.workflow_modules()
+        modules, params = [name for name, _ in workflow], [values for _, values in workflow]
+        expected = self._model_counts()
+        width = len(str(len(modules)))
+        started = re.compile(r"Running \[(\w+)\] module")
+        finished = re.compile(r"Module \[(\w+)\] finished")
+        run_start = step_start = time.perf_counter()
+        step, last_count, last_report = -1, -1, run_start
+
+        def label(index: int) -> str:
+            """Return the log prefix of a step, such as 'HADDOCK3 [2/6] rigidbody'.
+
+            Args:
+                index: Step number.
+
+            Returns:
+                The prefix.
+            """
+            return f"HADDOCK3 [{index + 1:>{width}}/{len(modules)}] {modules[index]}"
+
+        def report() -> None:
+            """Log the models written by the current step, when the count changed since the last line."""
+            nonlocal last_count, last_report
+            last_report = time.perf_counter()
+            if step < 0 or not expected[step]:
+                return
+            folder = self.run_dir / f"{step}_{modules[step]}"
+            count = len(list(folder.glob("*.pdb"))) + len(list(folder.glob("*.pdb.gz"))) if folder.is_dir() else 0
+            if count == last_count:
+                return
+            last_count = count
+            total = expected[step]
+            elapsed = last_report - step_start
+            line = f"{label(step)}: {count}/{total or '?'} models | {_duration(elapsed)}"
+            if total and 0 < count < total:
+                line += f" | ~{_duration(elapsed / count * (total - count))} left"
+            log_info(line)
+
+        with open(log_path) as log:
+            log.seek(offset)
+            while True:
+                done = process.poll() is not None
+                for text in log.readlines():
+                    if (match := started.search(text)) and match.group(1) in modules[step + 1:]:
+                        step = modules.index(match.group(1), step + 1)
+                        step_start, last_count = time.perf_counter(), -1
+                        if modules[step] in HADDOCK_REFINE_MODULES and step > 0:
+                            expected[step] = self._step_model_count(step - 1, params[step]) or expected[step]
+                        log_info(f"{label(step)} started | run {_duration(step_start - run_start)}")
+                    elif (match := finished.search(text)) and 0 <= step and match.group(1) == modules[step]:
+                        report()
+                        log_info(f"{label(step)} finished in {_duration(time.perf_counter() - step_start)}")
+                if done:
+                    return
+                if time.perf_counter() - last_report >= HADDOCK_PROGRESS_SECONDS:
+                    report()
+                time.sleep(HADDOCK_POLL_SECONDS)
 
     def validate_config(self) -> Self:
         """Check the set up with 'haddock3 --setup' in a scratch run directory, removed afterwards.
@@ -1456,11 +1606,20 @@ class HaddockDocking:
         log_info(f"HADDOCK3: set up in {self.workdir} passed haddock3 validation.")
         return self
 
-    def run_haddock(self, overwrite: bool = False) -> Self:
+    def run_haddock(self, overwrite: bool = False, progress: bool = True) -> Self:
         """Write the set up and run haddock3.
+
+        With progress, each module start and finish is logged, and while a module writes models the count written so
+        far, with an estimate of the time left, is logged every few seconds when it changes. Interrupting Python (for
+        example Ctrl+C or a notebook stop) stops haddock3.
 
         Args:
             overwrite: Whether to delete a previous run directory made by this class; others are never deleted.
+            progress: Whether to log progress while haddock3 runs.
+
+        When clustfcc is followed by seletopclusts without a top_clusters override, haddock3 runs up to clustfcc,
+        the top fifth of the clusters (at least five, or all when fewer) is chosen, and the run restarts from
+        seletopclusts.
 
         Returns:
             self.
@@ -1469,6 +1628,7 @@ class HaddockDocking:
             FileExistsError: If the run directory exists and may not be deleted.
         """
         start = time.perf_counter()
+        self._top_clusters = None
         config = self.export_inputs()
         sentinel = self.workdir / RUN_SENTINEL
         if self.run_dir.exists() and any(self.run_dir.iterdir()):
@@ -1478,9 +1638,52 @@ class HaddockDocking:
                 raise FileExistsError(f"{self.run_dir} was not created by HaddockDocking and is not deleted.")
             shutil.rmtree(self.run_dir)
         sentinel.write_text(f"{self.run_dir}\n")
-        self._run_command([str(config)], self.input_paths["log"])
+        split = self._cluster_split()
+        if split is None:
+            self._run_command([str(config)], self.input_paths["log"], progress=progress)
+        else:
+            # top_clusters depends on how many clusters clustfcc finds: run up to clustfcc, count, then restart
+            first = self.workdir / "config_clustering.toml"
+            first.write_text(self.config_toml(stop=split))
+            self._run_command([str(first)], self.input_paths["log"], progress=progress)
+            self._top_clusters = self._top_cluster_count(split - 1)
+            config.write_text(self.config_toml())
+            self._run_command([str(config), "--restart", str(split)], self.input_paths["log"], progress=progress,
+                              append=True)
         log_completion(start, f"HADDOCK3 '{self.method}' run finished in {self.run_dir}")
         return self
+
+    def _cluster_split(self) -> int | None:
+        """Return the index of a seletopclusts step whose top_clusters is chosen from the preceding clustfcc.
+
+        Returns:
+            The step index, or None when the workflow has no such step or top_clusters is given.
+        """
+        names = [name for name, _ in self.workflow_modules()]
+        for index in range(1, len(names)):
+            if names[index - 1:index + 1] == ["clustfcc", "seletopclusts"]:
+                return None if "top_clusters" in self.module_params.get("seletopclusts", {}) else index
+        return None
+
+    def _top_cluster_count(self, step: int) -> int:
+        """Return how many clusters to refine: a fixed fraction of the clusters found, at least a minimum.
+
+        Args:
+            step: Number of the clustfcc step.
+
+        Returns:
+            Number of clusters for seletopclusts.
+
+        Raises:
+            RuntimeError: If clustfcc found no clusters.
+        """
+        clusters = self.score_table(step)["cluster_id"].dropna().nunique()
+        if clusters == 0:
+            raise RuntimeError("clustfcc found no clusters; lower min_population with "
+                               "module_params={'clustfcc': {'min_population': 1}}.")
+        top = min(clusters, max(HADDOCK_MIN_TOP_CLUSTERS, math.ceil(HADDOCK_TOP_CLUSTER_FRACTION * clusters)))
+        log_info(f"HADDOCK3: clustfcc found {clusters} clusters; refining the top {top}.")
+        return top
 
 ###################################### RESULTS
 

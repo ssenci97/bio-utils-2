@@ -16,9 +16,11 @@ dock.residue_table().head()          # partner, segid, haddock_resid ↔ chain_k
 
 | `method` | Workflow |
 |---|---|
-| `ab-initio` | Full sampling (10,000 rigid-body models), refinement, clustering; the default. |
-| `oracle` | A short run (200 models) that checks restraints recover a known complex. |
-| `eval` | Like `oracle`, always ending with `caprieval` against the reference. |
+| `ab-initio` | 10,000 rigid-body models, with random and center-of-mass restraints unless you add your own; the default. |
+| `oracle` | 200 rigid-body models with restraints from the contacts of the input complex; checks the set up recovers a known complex. |
+| `targeted` | 200 rigid-body models with restraints you give as patch pairs (`add_patch_pair_restraints`). |
+
+Every method then clusters the rigid-body models (`clustfcc`), keeps the best fifth of the clusters (at least 5, or all when there are fewer) with 4 models each (`seletopclusts`), and refines only those (`emref`). It ends with `caprieval`, against the reference when there is one and otherwise against the best-scoring model. The number of clusters is known only after clustering, so `run_haddock` runs haddock3 up to `clustfcc`, counts the clusters, and restarts the run from `seletopclusts`. Setting `module_params={"seletopclusts": {"top_clusters": 10}}` fixes the number and runs haddock3 once.
 
 Partners that come from the same structure are moved apart with random rotations (`separate="auto"`), so the docking does not start from the answer. Override the preset of any module with `module_params={"rigidbody": {"sampling": 1000}}`.
 
@@ -46,6 +48,14 @@ dock.validate_config()               # haddock3 --setup in a scratch folder
 dock.run_haddock()                   # runs haddock3; the run folder is dock/run
 ```
 
+`run_haddock` logs progress while haddock3 runs: each module's start and finish, and while a module writes models, the count so far with an estimate of the time left. Interrupting Python (Ctrl+C, or stopping a notebook cell) stops haddock3. Pass `progress=False` to log only the end of the run.
+
+```text
+HADDOCK3 [2/5] rigidbody started | run 14s
+HADDOCK3 [2/5] rigidbody: 90/200 models | 11m40s | ~14m16s left
+HADDOCK3 [2/5] rigidbody finished in 25m53s
+```
+
 ## 4. Read the results
 
 <!-- skip-test -->
@@ -58,3 +68,5 @@ best.interface_complex("A", "B")             # analyse it like any other structu
 ```
 
 Docked models keep the reference sequences and numbering of the input chains, so contacts and interfaces of a model compare directly with the input.
+
+A complete run is in [`examples/dock_1kxp.py`](https://github.com/ssenci97/bio-utils-2/blob/main/examples/dock_1kxp.py): it re-docks actin and vitamin D-binding protein (1KXP) with the `oracle` preset and writes the restraints, scores, caprieval metrics, the interfaces of the top models next to the crystal's, and a 3D page of the best model.

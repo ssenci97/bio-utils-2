@@ -60,20 +60,19 @@ The tools can also be run directly: `ruff check src`, `pydoclint src`, `mypy`. T
 
 ## Documentation
 
-The site is built with [MkDocs](https://www.mkdocs.org/), the [Material](https://squidfunk.github.io/mkdocs-material/) theme and [mkdocstrings](https://mkdocstrings.github.io/python/), configured in `mkdocs.yml`, and published to <https://ssenci97.github.io/bio-utils-2/> by `.github/workflows/docs.yml` on every push to `main`.
+The site is built with [MkDocs](https://www.mkdocs.org/), the [Material](https://squidfunk.github.io/mkdocs-material/) theme and [mkdocstrings](https://mkdocstrings.github.io/python/), configured in `mkdocs.yml`. It is built locally and not published.
 
 ```bash
 mkdocs serve                       # live preview at http://127.0.0.1:8000
-mkdocs build --strict              # what CI runs; fails on any warning
+mkdocs build --strict              # what the tests run; fails on any warning
 ```
 
 - `README.md` holds the pitch, a short install and the quick start. Pages under `docs/` hold the rest: `quickstart.md`, `guide/*.md` (concepts, conventions, configuration, docking) and `reference/*.md` (API).
 - The API reference is generated from signatures and docstrings. Each `reference/*.md` page lists the `SyncedStructure` members of one area under `members:`. A new public method must be added to one of these lists; `tests/test_docs.py` fails until it is.
 - Python blocks in the README and in `docs/index.md`, `docs/quickstart.md` and `docs/guide/*.md` run in `tests/test_docs.py` (one namespace per page, with `from_rcsb` served from `tests/data`). Mark a block that must not run with `<!-- skip-test -->` on the line before it.
-- One-time GitHub setup: Settings → Pages → Source = **GitHub Actions**.
 
 ## Releasing
 
-1. `pytest -m ""` passes, and `python examples/export_all.py` runs.
+1. `pytest -m ""` passes, and `python examples/export_all.py` and `python examples/dock_1kxp.py` run.
 2. Update `CHANGELOG.md` and the version in `pyproject.toml` and `src/synced_structure/__init__.py`.
 3. Commit, then tag: `git tag v0.1.0 && git push --tags`.

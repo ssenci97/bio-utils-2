@@ -115,7 +115,7 @@ TIEN_MAX_ASA = {"ALA": 129, "ARG": 274, "ASN": 195, "ASP": 193, "CYS": 167, "GLN
 
 ### HADDOCK3 docking
 HADDOCK_EXECUTABLE = "haddock3"
-HADDOCK_METHODS = ("ab-initio", "oracle", "eval")
+HADDOCK_METHODS = ("ab-initio", "oracle", "targeted")
 HADDOCK_DEFAULT_SEED = 917
 # one single-character segment ID per docking partner, in partner order
 HADDOCK_SEGIDS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -136,28 +136,40 @@ HADDOCK_PLACEMENT_GROWTH = 1.25
 HADDOCK_SEEDED_MODULES = frozenset({"topoaa", "rigidbody", "flexref", "emref", "mdref", "emscoring", "mdscoring"})
 HADDOCK_RESTRAINT_MODULES = frozenset({"rigidbody", "flexref", "emref", "mdref"})
 HADDOCK_PROTECTED_GLOBALS = frozenset({"run_dir", "molecules"})
+# modules that write one model per input model (times sampling_factor), and haddock3 defaults used for progress
+HADDOCK_REFINE_MODULES = frozenset({"flexref", "emref", "mdref", "emscoring", "mdscoring"})
+HADDOCK_DEFAULT_SAMPLING = {"rigidbody": 1000}
+HADDOCK_DEFAULT_SELECT = 200
+HADDOCK_PROGRESS_SECONDS = 30.0     # seconds between model-count lines during run_haddock
+HADDOCK_POLL_SECONDS = 1.0          # how often the haddock3 log is read for module start and finish
+# every preset clusters the rigid-body models and refines only the best clusters; caprieval is appended to all
 HADDOCK_PRESETS: dict[str, list[tuple[str, dict[str, Any]]]] = {
     "ab-initio": [
         ("topoaa", {}),
         ("rigidbody", {"sampling": 10000, "cmrest": True, "ranair": True}),
-        ("seletop", {"select": 200}),
-        ("emref", {"contactairs": True}),
         ("clustfcc", {}),
-        ("seletopclusts", {"top_clusters": 10}),
+        ("seletopclusts", {"top_models": 4}),
+        ("emref", {"contactairs": True}),
     ],
     "oracle": [
         ("topoaa", {}),
         ("rigidbody", {"sampling": 200}),
+        ("clustfcc", {}),
+        ("seletopclusts", {"top_models": 4}),
         ("emref", {}),
-        ("seletop", {"select": 10}),
     ],
-    "eval": [
+    "targeted": [
         ("topoaa", {}),
         ("rigidbody", {"sampling": 200}),
+        ("clustfcc", {}),
+        ("seletopclusts", {"top_models": 4}),
         ("emref", {}),
-        ("seletop", {"select": 10}),
     ],
 }
+# seletopclusts keeps this fraction of the clustfcc clusters, but at least HADDOCK_MIN_TOP_CLUSTERS (or all if fewer)
+HADDOCK_TOP_CLUSTER_FRACTION = 0.2
+HADDOCK_MIN_TOP_CLUSTERS = 5
+HADDOCK_DEFAULT_TOP_MODELS = 10
 HADDOCK_RESIDUE_MAP_COLUMNS = [
     "partner", "segid", "haddock_resid", "structure_id", "chain_key", "chain_id", "auth_chain_id",
     "pdb_resnum", "icode", "resname", "sequence_index", "reference_index",

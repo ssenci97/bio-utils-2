@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+### Added
+- `run_haddock` logs progress: module starts and finishes, models written so far with the time left, and stops haddock3 when Python is interrupted. `progress=False` turns it off.
+
+### Changed: HADDOCK3 presets
+- Every preset clusters the rigid-body models and refines only the best clusters: `clustfcc` → `seletopclusts` (the top fifth of the clusters, at least 5, 4 models each) → `emref` → `caprieval`. Before, `oracle` and `eval` refined all 200 rigid-body models and `ab-initio` refined the top 200 before clustering.
+- The `eval` method is renamed `targeted`: docking from patch-pair restraints you give. It no longer requires a reference; like every method, it ends with `caprieval` against the reference when there is one, otherwise against the best-scoring model.
+
 ### Documentation
-- A documentation site built with MkDocs, Material and mkdocstrings and published to GitHub Pages: installation, a quick start, guides (concepts, conventions, configuration, HADDOCK3 docking) and an API reference organised by pipeline step. It replaces `docs/index.html` and `docs/build_docs.py`.
+- A documentation site built with MkDocs, Material and mkdocstrings: installation, a quick start, guides (concepts, conventions, configuration, HADDOCK3 docking) and an API reference organised by pipeline step. It replaces `docs/index.html` and `docs/build_docs.py`.
+- `examples/dock_1kxp.py`: a HADDOCK3 re-docking of actin and vitamin D-binding protein (1KXP), compared with the crystal.
 - The guide code blocks run in the tests, like the README's, and `mkdocs build --strict` is part of the test suite.
 
 ### Fixed
