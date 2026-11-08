@@ -40,10 +40,10 @@ from ._types import ChainRef, PathLike, Record, Self
 from .base import StructureState
 from .chains import ChainMixin
 from .constants import (
-    CAPRI_LABELS, CONTACTS_CUTOFF_NM, EXPORT_SEP, HADDOCK_ANALYSE_EXECUTABLE, HADDOCK_CHAIN_GAP, HADDOCK_CLEARANCE_A,
+    CAPRI_LABELS, CONTACTS_CUTOFF_NM, EXPORT_SEP, HADDOCK_ALASCAN_COLUMNS, HADDOCK_ANALYSE_EXECUTABLE, HADDOCK_CHAIN_GAP, HADDOCK_CLEARANCE_A,
     HADDOCK_DEFAULT_SEED, HADDOCK_EXECUTABLE, HADDOCK_MAX_RESID, HADDOCK_METHODS, HADDOCK_NUMBERINGS,
     HADDOCK_DEFAULT_SAMPLING, HADDOCK_DEFAULT_SELECT, HADDOCK_DEFAULT_TOP_MODELS, HADDOCK_MIN_TOP_CLUSTERS,
-    HADDOCK_PATCH_COLUMNS, HADDOCK_PATCH_GAP,
+    HADDOCK_PASSTHROUGH_MODULES, HADDOCK_PATCH_COLUMNS, HADDOCK_PATCH_GAP,
     HADDOCK_PLACEMENT_GROWTH, HADDOCK_PLACEMENT_TRIALS, HADDOCK_POLL_SECONDS, HADDOCK_PRESETS, HADDOCK_PROGRESS_SECONDS,
     HADDOCK_PROTECTED_GLOBALS, HADDOCK_REFINE_MODULES, HADDOCK_RESIDUE_MAP_COLUMNS, HADDOCK_RESTRAINT_COLUMNS, HADDOCK_RESTRAINT_DISTANCE,
     HADDOCK_RESTRAINT_KINDS, HADDOCK_RESTRAINT_MODULES, HADDOCK_SCORE_COLUMNS, HADDOCK_SEEDED_MODULES, HADDOCK_SEGIDS,
@@ -66,6 +66,8 @@ if TYPE_CHECKING:
 RUN_SENTINEL = ".synced_structure_run"
 LOG_TAIL_LINES = 40
 STEP_PATTERN = re.compile(r"^(\d+)_(\w+)$")
+SCAN_CLUSTER_PATTERN = re.compile(r"^scan_clt_(.+)\.tsv$")
+SCAN_MODEL_PATTERN = re.compile(r"^scan_(.+)\.tsv$")
 # REMARK labels of HADDOCK model headers, beyond the score and energies lines, and their io.json names
 REMARK_TERMS = {"Desolvation energy": "desolv", "buried surface area": "bsa"}
 
@@ -153,7 +155,7 @@ class InputPaths(TypedDict):
     """Files written by HaddockDocking.export_inputs().
 
     Attributes:
-        molecules: One PDB per partner.
+        molecules: One PDB per partner; for 'alascan', one PDB of the complex.
         reference: Reference complex for caprieval.
         ambiguous: Ambiguous restraint file.
         unambiguous: Unambiguous restraint file.
@@ -482,10 +484,11 @@ class HaddockDocking:
     """Configure, write, run, and read back a HADDOCK3 docking of chains from one or more SyncedStructures.
 
     Partners are rigid bodies. Restraints are given on the original chains, in reference, sequence, or author
-    numbering, and are written in HADDOCK3 numbering through the residue map.
+    numbering, and are written in HADDOCK3 numbering through the residue map. The 'alascan' method docks nothing: it
+    refines the partners as they sit, written as one complex, and scans their interface.
 
     Attributes:
-        method: Workflow preset, 'ab-initio', 'oracle', or 'targeted'.
+        method: Workflow preset, 'ab-initio', 'oracle', 'targeted', or 'alascan'.
         seed: Random seed of every CNS module and of the partner placement.
         ncores: Number of cores haddock3 may use.
         workdir: Directory holding inputs, restraints, config, logs, and the run.
@@ -533,11 +536,12 @@ class HaddockDocking:
         Args:
             partners: (SyncedStructure, chain or list of chains) pairs, one per rigid body.
             workdir: Directory for inputs, restraints, config, log, and the run directory 'run'.
-            method: 'ab-initio', 'oracle', or 'targeted'.
+            method: 'ab-initio', 'oracle', 'targeted', or 'alascan' (no docking: refine, cluster, and alanine-scan
+                the complex as given; see alascan_tables()).
             seed: Random seed, used as iniseed in every CNS module and for the placement of partners.
             ncores: Number of cores haddock3 may use.
             separate: 'auto' moves partners apart when two share a structure ID or touch (heavy atoms within
-                clearance_a); True or False forces it.
+                clearance_a); True or False forces it. 'alascan' never moves partners.
             clearance_a: Smallest gap in A between the bounding spheres of separated partners.
             module_params: {module: {parameter: value}} overriding the preset of each module.
             global_params: Top-level haddock3 parameters, such as mode or max_cpus.
@@ -548,12 +552,14 @@ class HaddockDocking:
             haddock3_exe: Path to the haddock3 executable, or None to search the PATH and this Python's bin directory.
 
         Raises:
-            ValueError: If method or separate is invalid.
+            ValueError: If method or separate is invalid, or separate is True for 'alascan'.
         """
         if method not in HADDOCK_METHODS:
             raise ValueError(f"method must be one of {HADDOCK_METHODS}.")
         if separate not in ("auto", True, False):
             raise ValueError("separate must be 'auto', True, or False.")
+        if method == "alascan" and separate is True:
+            raise ValueError("'alascan' scans the complex as given; partners cannot be separated.")
         self.method = method
         self.seed = int(seed)
         self.ncores = int(ncores)
@@ -571,7 +577,11 @@ class HaddockDocking:
         self._top_clusters = None
         self.partners = self._normalize_partners(partners)
         self._chains = self._assign_numbering()
-        self.separated = self._partners_overlap() if separate == "auto" else bool(separate)
+        if method == "alascan":
+            self.separated = False
+            self._check_interface()
+        else:
+            self.separated = self._partners_overlap() if separate == "auto" else bool(separate)
         self.placements = self._place_partners() if self.separated else {}
         self._check_overrides()
         self.set_reference(reference)
@@ -693,6 +703,14 @@ class HaddockDocking:
                          f"different structures but touch; moving them apart.")
                 return True
         return False
+
+    def _check_interface(self) -> None:
+        """Log a warning when no two partners touch, as 'alascan' then finds no interface to scan."""
+        coords = [self._partner_coords(index) for index in range(len(self.partners))]
+        if not any(ChainMixin._coords_touch(coords[i], coords[j], self.clearance_a)
+                   for i, j in itertools.combinations(range(len(coords)), 2)):
+            warnings.warn(f"No two partners have heavy atoms within {self.clearance_a} A; alascan will find no "
+                          "interface to scan.", stacklevel=3)
 
     def _place_partners(self) -> dict[int, Placement]:
         """Place every partner after the first apart from the others, keeping the first in place.
@@ -1160,6 +1178,31 @@ class HaddockDocking:
             return {index: mapping[index] for index in seq_indices}
         return {index: index for index in seq_indices}
 
+    def add_scan_residues(self, chain: ChainSpec, positions: Iterable[int], numbering: str = "reference") -> Self:
+        """Restrict the alanine scan of 'alascan' to some residues; without any, the whole interface is scanned.
+
+        alascan mutates only residues within its int_cutoff of the other partner in each model. haddock3 2026.7 fails
+        when a model ends up with no residue to mutate, so pick residues that stay at the interface.
+
+        Args:
+            chain: Chain, see _locate_chain.
+            positions: 1-based positions of the residues to scan.
+            numbering: 'reference', 'sequence', or 'author'.
+
+        Returns:
+            self.
+
+        Raises:
+            ValueError: If the method is not 'alascan'.
+        """
+        if self.method != "alascan":
+            raise ValueError("Scan residues need method='alascan'.")
+        index, resids = self._haddock_numbers(chain, positions, numbering)
+        params = self.module_params.setdefault("alascan", {})
+        name = f"resdic_{self.partners[index]['segid']}"
+        params[name] = sorted(set(params.get(name, [])) | set(resids))
+        return self
+
     def clear_restraints(self) -> Self:
         """Remove every restraint and patch.
 
@@ -1240,10 +1283,16 @@ class HaddockDocking:
     def input_paths(self) -> InputPaths:
         """Paths of the files export_inputs() creates."""
         inputs = self.workdir / "inputs"
+        if self.method == "alascan":
+            structure_ids = dict.fromkeys(self._safe_name(partner["structure"].structure_id) for partner in self.partners)
+            segids = "".join(partner["segid"] for partner in self.partners)
+            molecules = [inputs / f"complex_{'-'.join(structure_ids)}_{segids}.pdb"]
+        else:
+            molecules = [inputs / f"partner_{partner['segid']}_{self._safe_name(partner['structure'].structure_id)}"
+                                  f"_{'-'.join(self._safe_name(key) for key in partner['keys'])}.pdb"
+                         for partner in self.partners]
         return {
-            "molecules": [inputs / f"partner_{partner['segid']}_{self._safe_name(partner['structure'].structure_id)}"
-                                   f"_{'-'.join(self._safe_name(key) for key in partner['keys'])}.pdb"
-                          for partner in self.partners],
+            "molecules": molecules,
             "reference": inputs / "reference.pdb",
             "ambiguous": self.workdir / "restraints" / "ambig.tbl",
             "unambiguous": self.workdir / "restraints" / "unambig.tbl",
@@ -1516,7 +1565,7 @@ class HaddockDocking:
             raise ValueError(f"HADDOCK3 rejected the restraints in {path}: {error}") from error
 
     def export_inputs(self) -> Path:
-        """Write partner PDBs, the reference, restraint files, the residue map, and config.toml.
+        """Write partner PDBs (one complex PDB for 'alascan'), the reference, restraints, residue map, and config.toml.
 
         Returns:
             Path of config.toml.
@@ -1524,8 +1573,11 @@ class HaddockDocking:
         start = time.perf_counter()
         paths = self.input_paths
         config = self.config_toml()
-        for index, path in enumerate(paths["molecules"]):
-            self._write_pdb(path, self._partner_rows([index]), placed=True)
+        if self.method == "alascan":
+            self._write_pdb(paths["molecules"][0], self._partner_rows(range(len(self.partners))), placed=False)
+        else:
+            for index, path in enumerate(paths["molecules"]):
+                self._write_pdb(path, self._partner_rows([index]), placed=True)
         if self._reference_source is not None:
             self._write_pdb(paths["reference"], self._reference_rows(), placed=False)
         elif self._reference == "auto" and self._reference_path() == paths["reference"]:
@@ -1611,10 +1663,10 @@ class HaddockDocking:
             seletopclusts the count is an upper bound: clusters can have fewer than top_models members.
         """
         counts: list[int | None] = []
-        flowing: int | None = len(self.partners)
+        flowing: int | None = len(self.input_paths["molecules"])
         for name, params in self.workflow_modules():
             if name == "topoaa":
-                counts.append(len(self.partners))
+                counts.append(flowing)
             elif name in HADDOCK_DEFAULT_SAMPLING:
                 flowing = int(params.get("sampling", HADDOCK_DEFAULT_SAMPLING[name]))
                 counts.append(flowing)
@@ -1627,7 +1679,7 @@ class HaddockDocking:
                 elif name == "seletopclusts":
                     top = params.get("top_clusters")
                     flowing = None if top is None else int(top) * int(params.get("top_models", HADDOCK_DEFAULT_TOP_MODELS))
-                elif name not in ("clustfcc", "caprieval"):
+                elif name not in HADDOCK_PASSTHROUGH_MODULES:
                     flowing = None
                 counts.append(0)
         return counts
@@ -2015,6 +2067,63 @@ class HaddockDocking:
             raise FileNotFoundError(f"{folder.name} has no caprieval tables; "
                                     f"call run_caprieval(['{folder.name}']) first.")
         return self._read_capri_tables(analysed)
+
+    def alascan_tables(self, step: StepRef | None = None) -> dict[str, pd.DataFrame]:
+        """Return the alanine-scan results of an alascan step, mapped back to the original chains.
+
+        delta_score is the wild-type HADDOCK score minus the mutant's. Lower scores are better, so negative values
+        mark hot spots: residues whose mutation worsens the interface score.
+
+        Args:
+            step: Alascan step folder name or number; None for the last alascan step.
+
+        Returns:
+            {'models': one row per scanned residue of each model, and 'clusters': one row per scanned residue of each
+            cluster, averaged over its models; most negative delta_score first within each model or cluster}.
+
+        Raises:
+            FileNotFoundError: If the run has no alascan step or the step wrote no scan tables.
+        """
+        if step is None:
+            folders = [path for name, path in self.step_paths().items() if _split_step_name(name)[1] == "alascan"]
+            if not folders:
+                raise FileNotFoundError("The run has no alascan step; use method='alascan'.")
+            folder = folders[-1]
+        else:
+            folder = self._step_path(step)
+        models, clusters = [], []
+        for path in sorted(folder.glob("scan_*.tsv")):
+            frame = pd.read_csv(path, sep="\t", comment="#")
+            if match := SCAN_CLUSTER_PATTERN.match(path.name):
+                label = match.group(1)
+                frame.insert(0, "cluster_id", int(label) if label.isdigit() else label)
+                clusters.append(frame.drop(columns=["full_resname"], errors="ignore"))
+            elif match := SCAN_MODEL_PATTERN.match(path.name):
+                frame.insert(0, "model", match.group(1))
+                models.append(frame.rename(columns={"res": "resid"}))
+        if not models and not clusters:
+            raise FileNotFoundError(f"No scan tables in {folder}; alascan found no interface residues to mutate.")
+        return {"models": self._scan_frame(models, "model"), "clusters": self._scan_frame(clusters, "cluster_id")}
+
+    def _scan_frame(self, frames: list[pd.DataFrame], group: str) -> pd.DataFrame:
+        """Join alascan rows with the residue map and sort them.
+
+        Args:
+            frames: Scan tables, with 'chain' and 'resid' columns in segment IDs and HADDOCK3 numbers.
+            group: Column the rows are grouped by, 'model' or 'cluster_id'.
+
+        Returns:
+            One row per scanned residue, most negative delta_score first within each group.
+        """
+        residues = self.residue_table()[HADDOCK_ALASCAN_COLUMNS]
+        if not frames:
+            return pd.DataFrame(columns=[group, *HADDOCK_ALASCAN_COLUMNS])
+        scan = pd.concat(frames, ignore_index=True).rename(columns={"chain": "segid", "resid": "haddock_resid"})
+        scan = scan.astype({"segid": str, "haddock_resid": int})
+        merged = scan.merge(residues, on=["segid", "haddock_resid"], how="left")
+        leading = [group, *HADDOCK_ALASCAN_COLUMNS]
+        merged = merged[leading + [column for column in merged.columns if column not in leading]]
+        return merged.sort_values([group, "delta_score"], ignore_index=True)
 
     def plot_caprieval(self, x: str = "irmsd", y: str = "score", color: str | None = "dockq",
                        step: StepRef | None = None, title: str | None = None,

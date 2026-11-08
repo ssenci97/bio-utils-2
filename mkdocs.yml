@@ -87,6 +87,9 @@ markdown_extensions:
       base_path: ["."]
       check_paths: true
 
+hooks:
+  - docs/hooks.py
+
 plugins:
   - search
   - mkdocstrings:
@@ -112,5 +115,6 @@ plugins:
 
 watch:
   - src
+  - docs/scripts
   - README.md
   - CHANGELOG.md

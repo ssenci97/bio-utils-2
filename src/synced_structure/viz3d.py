@@ -7,9 +7,7 @@ from __future__ import annotations
 
 ###################################### IMPORTS AND CONSTANTS
 
-import copy
 import hashlib
-import io
 import json
 import math
 import time
@@ -17,7 +15,6 @@ import uuid
 from collections.abc import Sequence
 from html import escape
 
-from Bio.PDB import MMCIFIO
 from IPython.display import HTML
 
 from .base import StructureState
@@ -173,29 +170,6 @@ class Viz3DMixin(StructureState):
         return {cid: colors.get(cid, chain_palette[index % len(chain_palette)])
                 for index, cid in enumerate(self.chain_ids)}
 
-###################################### STRUCTURE TEXT
-
-    def _mmcif_text(self, chain_id: str | None = None) -> str:
-        """Return the structure, or one chain, as mmCIF text, which has no atom serial limit.
-
-        Args:
-            chain_id: Chain to export, or None for all chains.
-
-        Returns:
-            The mmCIF text.
-        """
-        selected = {self._chain_key(chain_id)} if chain_id is not None else set(self.chains)
-        structure = copy.deepcopy(self.structure)
-        model = next(structure.get_models())
-        for chain in list(model.get_chains()):
-            if str(chain.id) not in selected:
-                model.detach_child(chain.id)
-        writer = MMCIFIO()
-        writer.set_structure(structure)
-        output = io.StringIO()
-        writer.save(output)
-        return output.getvalue()
-
 ###################################### OVERLAY
 
     def _angles_overlay_html(self, element: str, text: str, angles_font_px: int = ANGLES_FONT_PX) -> str:
@@ -252,7 +226,7 @@ class Viz3DMixin(StructureState):
             "__BACKGROUND__": json.dumps(background), "__LABEL__": label_js,
             "__POSE__": json.dumps(list(_quaternion(angles))), "__SHOW__": "true" if show_angles else "false",
             "__ANGLES__": angles_js, "__TEXT__": json.dumps(text),
-            "__CIF__": json.dumps(self._mmcif_text(chain_id=chain_id)),
+            "__CIF__": json.dumps(self._mmcif_text(None if chain_id is None else [chain_id], key_as_author=True)),
         }
         html = VIZ_TEMPLATE
         for key_name, value in replacements.items():

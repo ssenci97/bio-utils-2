@@ -7,6 +7,7 @@ instead, so the test is offline. The API reference must document every public na
 
 import importlib.util
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -119,3 +120,38 @@ def test_mkdocs_builds_strict(tmp_path):
                             cwd=ROOT, capture_output=True, text=True, env={**__import__("os").environ,
                                                                           "NO_MKDOCS_2_WARNING": "1"})
     assert result.returncode == 0, result.stderr[-3000:]
+
+
+def _operations_graph():
+    spec = importlib.util.spec_from_file_location("operations_graph", ROOT / "docs" / "scripts" / "operations_graph.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_operations_graph_lists_every_public_name_once():
+    import synced_structure
+    from synced_structure import HaddockDocking
+
+    def public(cls):
+        return {name for name in dir(cls) if not name.startswith("_")
+                and (callable(getattr(cls, name)) or isinstance(getattr(cls, name), property))}
+
+    structure, docking = public(SyncedStructure), public(HaddockDocking)
+    expected = structure | {f"HaddockDocking.{name}" if name in structure else name for name in docking}
+    expected |= set(synced_structure.__all__) - {"SyncedStructure"}
+    names = _operations_graph().documented_names()
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    assert not repeated, f"listed more than once in docs/scripts/operations_graph.py: {repeated}"
+    missing, unknown = sorted(expected - set(names)), sorted(set(names) - expected)
+    assert not missing, f"add these to OPERATIONS in docs/scripts/operations_graph.py: {missing}"
+    assert not unknown, f"not public: {unknown}"
+
+
+def test_operations_graph_renders(tmp_path):
+    pytest.importorskip("graphviz")
+    if shutil.which("dot") is None:
+        pytest.skip("Graphviz dot is not installed")
+    png = _operations_graph().render(tmp_path / "operations")
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert (ROOT / "docs" / "assets" / "operations.png").is_file()

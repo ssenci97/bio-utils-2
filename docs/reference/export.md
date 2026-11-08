@@ -1,6 +1,18 @@
 # Export
 
-Every `export_` method writes `{structure_id}_{name}` into `outdir` (default: the `save_outdir` setting, see [Configuration](../guide/configuration.md)) and returns the written path or paths.
+Every `export_` method writes `{structure_id}_{name}` into `outdir` (default: the `save_outdir` setting, see [Configuration](../guide/configuration.md)) and returns the written path or paths. `export_structure` writes `{structure_id}.cif` or `.pdb` instead.
+
+## Structure files
+
+mmCIF reloads with `from_path()` into the same chains: keys, label and author IDs, entities, descriptions, accessions, and reference sequences. PDB keeps coordinates, residue IDs, and author chain IDs only.
+
+::: synced_structure.SyncedStructure.export_structure
+
+::: synced_structure.SyncedStructure.mmcif_string
+
+::: synced_structure.SyncedStructure.pdb_string
+
+## Tables, figures, and pages
 
 ::: synced_structure.SyncedStructure.export_chain_table
 

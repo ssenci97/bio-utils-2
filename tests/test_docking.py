@@ -298,7 +298,7 @@ def test_preset_modules_seed_and_restraints(sync, tmp_path):
             if name in HADDOCK_SEEDED_MODULES:
                 assert config[name]["iniseed"] == 42
         assert config["caprieval"]["receptor_chain"] == "A" and config["caprieval"]["ligand_chains"] == ["B"]
-        assert len(config["molecules"]) == 2 and config["run_dir"].endswith("run")
+        assert len(config["molecules"]) == (1 if method == "alascan" else 2) and config["run_dir"].endswith("run")
     abinitio = _config(sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "a"))
     assert abinitio["rigidbody"] == {"sampling": 10000, "cmrest": True, "ranair": True, "iniseed": 917}
     assert abinitio["emref"]["contactairs"] is True and abinitio["seletopclusts"] == {"top_models": 4}
@@ -587,6 +587,72 @@ def test_docked_without_caprieval(finished, monkeypatch):
     assert finished.docked_model_paths() == docked["path"].tolist()
 
 
+# alascan (no docking)
+
+SCAN_HEADER = "#" * 80 + "\n# `alascan` results\n#\n"
+SCAN_MODEL = (SCAN_HEADER + "chain\tres\tori_resname\tend_resname\tscore\tdelta_score\tz_score\n"
+              "A\t146\tARG\tALA\t-250.0\t-16.0\t-1.0\nA\t180\tARG\tALA\t-260.0\t-8.0\t1.0\n")
+SCAN_CLUSTER = (SCAN_HEADER + "chain\tresid\tresname\tfull_resname\tdelta_score\tdelta_score_std\tfrac_pres\tz_score\n"
+                "A\t180\tARG\tA-180-ARG\t-8.0\t0.0\t0.5\t1.0\nA\t146\tARG\tA-146-ARG\t-16.0\t0.2\t1.0\t-1.0\n")
+
+
+@pytest.fixture
+def alascan(sync, tmp_path):
+    """Return an alascan set up of chain A against the B+C duplex."""
+    return sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "scan", method="alascan", seed=7)
+
+
+def test_alascan_workflow_keeps_the_complex(sync, alascan, tmp_path):
+    config = _config(alascan)
+    assert [name for name in config if isinstance(config[name], dict)] == [
+        "topoaa", "mdref", "rmsdmatrix", "clustrmsd", "alascan", "caprieval"]
+    assert "rigidbody" not in config and len(config["molecules"]) == 1
+    assert config["mdref"]["iniseed"] == 7 and config["caprieval"]["ligand_chains"] == ["B"]
+    assert not alascan.separated and not alascan.placements
+    assert alascan._model_counts() == [1, 10, 0, 0, 0, 0]
+    with pytest.raises(ValueError, match="cannot be separated"):
+        sync.prepare_haddock_docking("A", "B", workdir=tmp_path, method="alascan", separate=True)
+    alascan.export_inputs()
+    complex_pdb = alascan.input_paths["molecules"][0]
+    assert complex_pdb.name == "complex_1AAY_AB.pdb"
+    parsed = PDBParser(QUIET=True).get_structure("c", complex_pdb)
+    assert sorted(chain.id for chain in parsed[0]) == ["A", "B"]
+    written = np.array([atom.coord for atom in parsed.get_atoms()], dtype=np.float64)
+    assert np.allclose(written, _heavy_coords(sync, ["A", "B", "C"]), atol=1e-3)
+
+
+def test_alascan_warns_without_interface(sync, tmp_path):
+    apart = sync.subset_chains(["B", "C"])
+    for atom in apart.structure.get_atoms():
+        atom.coord = atom.coord + np.array([500.0, 0.0, 0.0], dtype=atom.coord.dtype)
+    with pytest.warns(UserWarning, match="no interface"):
+        sync.prepare_haddock_docking("A", (apart, ["B", "C"]), workdir=tmp_path, method="alascan")
+
+
+def test_scan_residues(alascan, setup):
+    alascan.add_scan_residues("A", [24, 46]).add_scan_residues("A", [146], numbering="author")
+    assert _config(alascan)["alascan"]["resdic_A"] == [124, 146]
+    with pytest.raises(ValueError, match="alascan"):
+        setup.add_scan_residues("A", [24])
+
+
+def test_alascan_tables(alascan):
+    with pytest.raises(FileNotFoundError):
+        alascan.alascan_tables()
+    folder = alascan.run_dir / "4_alascan"
+    folder.mkdir(parents=True)
+    (folder / "scan_mdref_1.tsv").write_text(SCAN_MODEL)
+    (folder / "scan_clt_1.tsv").write_text(SCAN_CLUSTER)
+    tables = alascan.alascan_tables()
+    assert alascan.alascan_tables(4)["models"].equals(tables["models"])
+    models, clusters = tables["models"], tables["clusters"]
+    assert models["model"].eq("mdref_1").all() and models["haddock_resid"].tolist() == [146, 180]
+    assert models["reference_index"].tolist() == [46, 80] and models["chain_key"].eq("A").all()
+    assert clusters["cluster_id"].eq(1).all() and clusters["delta_score"].tolist() == [-16.0, -8.0]
+    assert clusters["reference_index"].tolist() == [46, 80] and "full_resname" not in clusters
+    assert list(models.columns[:3]) == ["model", "segid", "haddock_resid"]
+
+
 # haddock3 runs (low throughput)
 
 needs_haddock = pytest.mark.skipif(shutil.which("haddock3") is None, reason="haddock3 is not installed")
@@ -680,3 +746,21 @@ def test_haddock_run_across_structures(apo, tmp_path):
     docked = setup.load_docked_model(0)
     assert sorted(docked.chain_ids) == ["A", "AB"]                  # both partners had a chain 'A'
     assert docked.chain_table()["mapping_fraction"].eq(1.0).all()
+
+
+@pytest.mark.haddock
+@needs_haddock
+def test_haddock_alascan_run(sync, tmp_path):
+    setup = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path, method="alascan", seed=7, ncores=2,
+                                         module_params={"mdref": {"sampling_factor": 2}, "clustrmsd": {"n_clusters": 1}})
+    setup.add_scan_residues("A", [24, 46, 70, 80])           # arginines bound to the DNA
+    setup.run_haddock()
+    assert [name.split("_", 1)[1] for name in setup.step_paths()] == [
+        "topoaa", "mdref", "rmsdmatrix", "clustrmsd", "alascan", "caprieval"]
+    tables = setup.alascan_tables()
+    models = tables["models"]
+    assert len(models) and models["chain_key"].eq("A").all() and set(models["reference_index"]) <= {24, 46, 70, 80}
+    assert set(models["model"]) == {"mdref_1", "mdref_2"} and len(tables["clusters"])
+    docked = setup.docked_model_table()
+    assert len(docked) == 2 and docked["reference"].eq("reference.pdb").all() and docked["irmsd"].lt(3).all()
+    assert sorted(setup.load_docked_model(0).chain_ids) == ["A", "B", "C"]

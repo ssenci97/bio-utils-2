@@ -137,3 +137,52 @@ def test_viz_and_config(sync, tmp_path):
     loaded = SyncedStructure.from_path(CIF, config_path=config)
     assert loaded.config["save_outdir"] == "elsewhere"
     assert config.read_text() == "synced_structure:\n  save_outdir: elsewhere\n"
+
+
+@pytest.mark.parametrize("key_by", ["auth", "label"])
+def test_mmcif_round_trip(tmp_path, key_by):
+    sync = SyncedStructure.from_path(CIF, key_by=key_by)
+    path = sync.export_structure(outdir=tmp_path)
+    assert path.name == "1AAY.cif"
+    reloaded = SyncedStructure.from_path(path, key_by=key_by)
+    columns = ["chain_key", "chain_id", "auth_chain_id", "entity_id", "description", "external_ref", "sequence_length",
+               "reference_length", "mapped_residues"]
+    assert reloaded.chain_table()[columns].equals(sync.chain_table()[columns])
+    assert len(list(reloaded.model.get_atoms())) == len(list(sync.model.get_atoms()))
+    for key in sync.chain_ids:
+        assert reloaded.get_reference_sequence(key) == sync.get_reference_sequence(key)
+        assert reloaded[key].sequence_index_to_ref_index == sync[key].sequence_index_to_ref_index
+
+
+def test_structure_subsets_and_pdb(sync, tmp_path):
+    subset = sync.export_structure(chain_ids=["A"], outdir=tmp_path)
+    assert subset.name == "1AAY_A.cif" and SyncedStructure.from_path(subset).chain_ids == ["A"]
+    pdb = sync.export_structure("pdb", outdir=tmp_path)
+    reloaded = SyncedStructure.from_path(pdb)
+    assert pdb.suffix == ".pdb" and reloaded.chain_ids == sync.chain_ids
+    assert reloaded.get_sequence("A") == sync.get_sequence("A")
+    assert len(list(reloaded.model.get_atoms())) == len(list(sync.model.get_atoms()))
+    with pytest.raises(ValueError, match="file_format"):
+        sync.export_structure("xyz", outdir=tmp_path)
+    sync.set_reference_sequence("B", "AGCGTGGGCGTAA")         # B and C share an entity ID but not a sequence
+    sync.set_entity_id("C", sync["B"].entity_id)
+    split = SyncedStructure.from_path(sync.export_structure(outdir=tmp_path / "split"))
+    assert split["B"].entity_id != split["C"].entity_id and split.get_reference_sequence("B") == "AGCGTGGGCGTAA"
+    sync.rename_chains({"A": "AB"})
+    assert SyncedStructure.from_path(sync.export_structure(outdir=tmp_path / "multi")).chain_ids == ["B", "C", "AB"]
+    with pytest.raises(ValueError, match="one character"):
+        sync.pdb_string()
+
+
+@pytest.mark.parametrize("key_by", ["auth", "label"])
+def test_viewer_names_chains_by_key(key_by):
+    import io
+
+    from Bio.PDB.MMCIF2Dict import MMCIF2Dict
+
+    sync = SyncedStructure.from_path(CIF, key_by=key_by)
+    text = sync._mmcif_text(key_as_author=True)
+    assert set(MMCIF2Dict(io.StringIO(text))["_atom_site.auth_asym_id"]) == set(sync.chain_ids)
+    single = MMCIF2Dict(io.StringIO(sync._mmcif_text([sync.chain_ids[0]], key_as_author=True)))
+    assert set(single["_atom_site.auth_asym_id"]) == {sync.chain_ids[0]}
+    assert sync.show_structure_3d(chain_id=sync.chain_ids[0]).data

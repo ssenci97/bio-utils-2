@@ -3,6 +3,20 @@
 ## Unreleased
 
 ### Added
+- Operations map (`docs/assets/operations.png`, at most 1920 x 1080 px) on the API reference page: the parts of a
+  `SyncedStructure` (and of each `ChainRecord`), with every public method linked to the parts it changes or reads, as
+  a Graphviz directed graph from `docs/scripts/operations_graph.py`. An mkdocs hook (`docs/hooks.py`) redraws
+  it before each build. `tests/test_docs.py` fails when a public method is missing from it. `graphviz` joins the `docs`
+  extra.
+- `SyncedStructure.export_structure(file_format="cif" | "pdb", chain_ids=None)` writes the structure, or some chains,
+  to a file; `mmcif_string()` and `pdb_string()` return the text. mmCIF keeps label and author chain IDs, entities,
+  descriptions, accessions, and reference sequences, so `from_path()` reloads the same chains. PDB keeps author chain
+  IDs and raises a clear error for chain IDs longer than one character, more than 99,999 atoms, or residue numbers
+  outside -999..9999.
+- `method="alascan"` for `HaddockDocking`: no rigid-body docking. The partners are written as one complex, refined
+  (`mdref`), clustered (`rmsdmatrix`, `clustrmsd`), alanine-scanned (`alascan`) and evaluated (`caprieval`).
+  `add_scan_residues()` restricts the scan in your numbering. `alascan_tables()` returns the per-model and per-cluster
+  results mapped back to chain keys and reference positions.
 - HADDOCK3 partners from different structures: `HaddockDocking.set_reference(complex, chain_map=...)` names a complex
   (for example the holo complex of two apo partners) that caprieval compares models with, written to
   `inputs/reference.pdb` in the partners' segment IDs and HADDOCK3 numbering, and that `add_contact_restraints()` reads
@@ -12,6 +26,10 @@
 - `examples/dock_barnase_barstar.py`: docking of unbound barnase (1A2P) and barstar (1A19), evaluated against the complex
   (1BRS). `examples/dock_1kxp.py` also saves the caprieval plot.
 - `run_haddock` logs progress: module starts and finishes, models written so far with the time left, and stops haddock3 when Python is interrupted. `progress=False` turns it off.
+
+### Changed: 3D views
+- `show_structure_3d` and `export_structure_3d` build their mmCIF with the same writer as `mmcif_string()`, with chain
+  keys as author IDs so colors and click labels still follow your chain keys.
 
 ### Changed: HADDOCK3 partners
 - Residues transferred between structures (contacts from `source=`, the reference complex) are matched through a

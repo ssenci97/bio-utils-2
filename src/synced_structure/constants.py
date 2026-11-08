@@ -39,6 +39,10 @@ DEFAULT_CONFIG = {
 PALETTE = ["#ECDE90", "#93DEB6", "#F1B584", "#76BBE2", "#DA919B",
            "#899E64", "#8E81B9", "#A66C58", "#30767A", "#7A5271"]
 SUPPORTED_SUFFIXES = {".pdb", ".cif", ".mmcif"}
+# export_structure: accepted file_format values and the suffix each writes
+STRUCTURE_FORMATS = {"cif": "cif", "mmcif": "cif", "pdb": "pdb"}
+PDB_MAX_ATOMS = 99999
+PDB_MIN_RESNUM, PDB_MAX_RESNUM = -999, 9999
 EXPORT_SUFFIX = ".tsv"
 EXPORT_SEP = "\t"
 KEY_MODES = ("auth", "label")
@@ -115,7 +119,7 @@ TIEN_MAX_ASA = {"ALA": 129, "ARG": 274, "ASN": 195, "ASP": 193, "CYS": 167, "GLN
 
 ### HADDOCK3 docking
 HADDOCK_EXECUTABLE = "haddock3"
-HADDOCK_METHODS = ("ab-initio", "oracle", "targeted")
+HADDOCK_METHODS = ("ab-initio", "oracle", "targeted", "alascan")
 HADDOCK_DEFAULT_SEED = 917
 # one single-character segment ID per docking partner, in partner order
 HADDOCK_SEGIDS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -138,11 +142,15 @@ HADDOCK_RESTRAINT_MODULES = frozenset({"rigidbody", "flexref", "emref", "mdref"}
 HADDOCK_PROTECTED_GLOBALS = frozenset({"run_dir", "molecules"})
 # modules that write one model per input model (times sampling_factor), and haddock3 defaults used for progress
 HADDOCK_REFINE_MODULES = frozenset({"flexref", "emref", "mdref", "emscoring", "mdscoring"})
+# modules that pass the models of the previous step on unchanged in number
+HADDOCK_PASSTHROUGH_MODULES = frozenset({"clustfcc", "caprieval", "rmsdmatrix", "clustrmsd", "alascan"})
 HADDOCK_DEFAULT_SAMPLING = {"rigidbody": 1000}
 HADDOCK_DEFAULT_SELECT = 200
 HADDOCK_PROGRESS_SECONDS = 30.0     # seconds between model-count lines during run_haddock
 HADDOCK_POLL_SECONDS = 1.0          # how often the haddock3 log is read for module start and finish
-# every preset clusters the rigid-body models and refines only the best clusters; caprieval is appended to all
+# the docking presets cluster the rigid-body models and refine only the best clusters; 'alascan' docks nothing: it
+# refines the input complex into an ensemble, clusters it, and scans the interface (haddock3's alascan example);
+# caprieval is appended to all
 HADDOCK_PRESETS: dict[str, list[tuple[str, dict[str, Any]]]] = {
     "ab-initio": [
         ("topoaa", {}),
@@ -165,6 +173,13 @@ HADDOCK_PRESETS: dict[str, list[tuple[str, dict[str, Any]]]] = {
         ("seletopclusts", {"top_models": 4}),
         ("emref", {}),
     ],
+    "alascan": [
+        ("topoaa", {"autohis": True}),
+        ("mdref", {"sampling_factor": 10}),
+        ("rmsdmatrix", {}),
+        ("clustrmsd", {"n_clusters": 2}),
+        ("alascan", {"scan_residue": "ALA", "output_bfactor": True, "int_cutoff": 3.0}),
+    ],
 }
 # seletopclusts keeps this fraction of the clustfcc clusters, but at least HADDOCK_MIN_TOP_CLUSTERS (or all if fewer)
 HADDOCK_TOP_CLUSTER_FRACTION = 0.2
@@ -179,6 +194,11 @@ HADDOCK_RESTRAINT_COLUMNS = [
 ]
 HADDOCK_PATCH_COLUMNS = ["patch", "segid_a", "chain_a", "residues_a", "segid_b", "chain_b", "residues_b", "n_pairs"]
 HADDOCK_ANALYSE_EXECUTABLE = "haddock3-analyse"
+# leading columns of HaddockDocking.alascan_tables(); haddock3's score and delta columns follow
+HADDOCK_ALASCAN_COLUMNS = [
+    "segid", "haddock_resid", "structure_id", "chain_key", "chain_id", "auth_chain_id", "pdb_resnum", "icode",
+    "sequence_index", "reference_index",
+]
 # axis labels of caprieval columns in HaddockDocking.plot_caprieval; other columns are labelled by name
 CAPRI_LABELS = {"score": "HADDOCK score", "irmsd": "i-RMSD (Å)", "lrmsd": "l-RMSD (Å)", "ilrmsd": "il-RMSD (Å)",
                 "fnat": "Fnat", "dockq": "DockQ", "caprieval_rank": "Rank"}

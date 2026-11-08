@@ -59,6 +59,8 @@ view = s.show_structure_3d()                                # interactive 3D vie
 ## Files
 
 ```python
+s.export_structure(outdir="results")                        # results/1AAY.cif; reloads with the same chains
+s.export_structure("pdb", chain_ids=["A"], outdir="results")   # results/1AAY_A.pdb
 s.export_chain_table(outdir="results")                      # results/1AAY_chains.tsv
 s.export_contact_stat_tables(outdir="results")              # results/1AAY_contact_stats_*.tsv
 s.export_plot(lambda: s.plot_contact_map("A", "B"), "map_A_B", outdir="results")   # results/1AAY_map_A_B.pdf

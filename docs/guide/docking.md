@@ -21,8 +21,9 @@ dock.residue_table().head()          # partner, segid, haddock_resid ↔ chain_k
 | `ab-initio` | 10,000 rigid-body models, with random and center-of-mass restraints unless you add your own; the default. |
 | `oracle` | 200 rigid-body models with restraints from the contacts of the input complex; checks the set up recovers a known complex. |
 | `targeted` | 200 rigid-body models with restraints you give as patch pairs (`add_patch_pair_restraints`). |
+| `alascan` | No docking: an alanine scan of the complex as given (see [Alanine scan](#alanine-scan)). |
 
-Every method then clusters the rigid-body models (`clustfcc`), keeps the best fifth of the clusters (at least 5, or all when there are fewer) with 4 models each (`seletopclusts`), and refines only those (`emref`). It ends with `caprieval`, against the reference when there is one and otherwise against the best-scoring model. The number of clusters is known only after clustering, so `run_haddock` runs haddock3 up to `clustfcc`, counts the clusters, and restarts the run from `seletopclusts`. Setting `module_params={"seletopclusts": {"top_clusters": 10}}` fixes the number and runs haddock3 once.
+Every docking method then clusters the rigid-body models (`clustfcc`), keeps the best fifth of the clusters (at least 5, or all when there are fewer) with 4 models each (`seletopclusts`), and refines only those (`emref`). It ends with `caprieval`, against the reference when there is one and otherwise against the best-scoring model. The number of clusters is known only after clustering, so `run_haddock` runs haddock3 up to `clustfcc`, counts the clusters, and restarts the run from `seletopclusts`. Setting `module_params={"seletopclusts": {"top_clusters": 10}}` fixes the number and runs haddock3 once.
 
 Partners that come from the same structure, or that touch, are moved apart with random rotations (`separate="auto"`), so the docking does not start from the answer. Override the preset of any module with `module_params={"rigidbody": {"sampling": 1000}}`.
 
@@ -71,5 +72,32 @@ best.interface_complex("A", "B")             # analyse it like any other structu
 ```
 
 Docked models keep the reference sequences and numbering of the input chains, so contacts and interfaces of a model compare directly with the input.
+
+## Alanine scan
+
+`method="alascan"` docks nothing. It follows haddock3's alanine-scan example:
+
+1. The partners are written as one complex, in place. They are never moved apart.
+2. `mdref` refines the complex into 10 models.
+3. `rmsdmatrix` and `clustrmsd` group the models into 2 clusters.
+4. `alascan` mutates each interface residue (within 3 Å of another partner) to alanine and rescores.
+5. `caprieval` compares the models with the input complex.
+
+<!-- skip-test -->
+```python
+scan = s.prepare_haddock_docking("A", ["B", "C"], workdir="scan", method="alascan",
+                                 module_params={"mdref": {"sampling_factor": 2}, "clustrmsd": {"n_clusters": 1}})
+scan.add_scan_residues("A", [24, 46, 70, 80])   # optional: only these residues, in reference numbering
+scan.run_haddock()
+tables = scan.alascan_tables()
+tables["models"]                                # one row per mutated residue of each model
+tables["clusters"]                              # averaged per cluster, with delta_score_std and frac_pres
+```
+
+Both tables carry your chain keys and the sequence and reference positions next to haddock3's segment ID and residue number.
+
+`delta_score` is the wild-type HADDOCK score minus the mutant's. Lower scores are better, so the most negative rows, listed first, are the hot spots.
+
+haddock3 2026.7 fails when a model has no residue to mutate. Residues you pass to `add_scan_residues` must therefore stay at the interface.
 
 A complete run is in [`examples/dock_1kxp.py`](https://github.com/ssenci97/bio-utils-2/blob/main/examples/dock_1kxp.py): it re-docks actin and vitamin D-binding protein (1KXP) with the `oracle` preset and writes the restraints, scores, caprieval metrics, the interfaces of the top models next to the crystal's, and a 3D page of the best model.

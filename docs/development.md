@@ -60,11 +60,12 @@ The tools can also be run directly: `ruff check src`, `pydoclint src`, `mypy`. T
 
 ## Documentation
 
-The site is built with [MkDocs](https://www.mkdocs.org/), the [Material](https://squidfunk.github.io/mkdocs-material/) theme and [mkdocstrings](https://mkdocstrings.github.io/python/), configured in `mkdocs.yml`. It is built locally and not published.
+The site is built with [MkDocs](https://www.mkdocs.org/), the [Material](https://squidfunk.github.io/mkdocs-material/) theme and [mkdocstrings](https://mkdocstrings.github.io/python/), configured in `mkdocs.yml`. It is built locally and not published. A hook (`docs/hooks.py`) redraws the operations map (`docs/assets/operations.png`) with Graphviz from `docs/scripts/operations_graph.py` before each build. A test fails when a public method is missing from that script, so add new methods to its `OPERATIONS`.
 
 ```bash
 mkdocs serve                       # live preview at http://127.0.0.1:8000
 mkdocs build --strict              # what the tests run; fails on any warning
+python docs/scripts/operations_graph.py   # redraw docs/assets/operations.png by hand
 ```
 
 - `README.md` holds the pitch, a short install and the quick start. Pages under `docs/` hold the rest: `quickstart.md`, `guide/*.md` (concepts, conventions, configuration, docking), `tutorials/haddock/*.md` (HADDOCK3 tutorials) and `reference/*.md` (API).
