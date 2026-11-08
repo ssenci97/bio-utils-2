@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+- `HaddockDocking.run_haddock()` no longer fails after clustfcc with "No scored models in ..._clustfcc" when haddock3
+  runs as an executable but is not importable in the Python environment: the clusters that size seletopclusts are
+  counted from clustfcc's own `clustfcc.tsv` instead of its io.json.
+
 ### Added
 - `core_count()`: the CPU cores this process may use, the smallest of the affinity mask, the cgroup CPU quota
   (containers, Kubernetes, systemd, Slurm) and the batch-scheduler allocation (`SLURM_CPUS_PER_TASK`,

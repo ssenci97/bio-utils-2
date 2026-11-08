@@ -405,12 +405,17 @@ def test_model_counts(setup):
     assert setup._cluster_split() == 3
 
 
-def test_top_cluster_count(setup, monkeypatch):
+def test_top_cluster_count(setup):
+    folder = setup.run_dir / "2_clustfcc"
+    folder.mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="no clusters"):             # clustfcc writes no table without clusters
+        setup._top_cluster_count(2)
     for found, top in ((1, 1), (3, 3), (5, 5), (12, 5), (25, 5), (26, 6), (100, 20)):
-        table = pd.DataFrame({"cluster_id": list(range(1, found + 1)) + [None]})
-        monkeypatch.setattr(setup, "score_table", lambda step, table=table: table)
+        rows = [f"{rank}\trigidbody_{rank}.pdb\t-1.00\t{cluster}"
+                for rank, cluster in enumerate([*range(1, found + 1), 1, "-"], start=1)]
+        (folder / "clustfcc.tsv").write_text("rank\tmodel_name\tscore\tcluster_id\n" + "\n".join(rows) + "\n\n")
         assert setup._top_cluster_count(2) == top
-    monkeypatch.setattr(setup, "score_table", lambda step: pd.DataFrame({"cluster_id": [None]}))
+    (folder / "clustfcc.tsv").write_text("rank\tmodel_name\tscore\tcluster_id\n1\trigidbody_1.pdb\t-1.00\t-\n")
     with pytest.raises(RuntimeError, match="no clusters"):
         setup._top_cluster_count(2)
     fixed = setup.__class__([(p["structure"], p["keys"]) for p in setup.partners], setup.workdir / "f",
@@ -430,6 +435,9 @@ for step in 0_topoaa 1_rigidbody 2_clustfcc 3_seletopclusts 4_emref 5_caprieval;
     esac
     i=1
     while [ $i -le $n ]; do touch run/$step/${name}_$i.pdb; i=$((i + 1)); sleep 0.05; done
+    if [ $name = clustfcc ]; then
+        printf 'rank\tmodel_name\tscore\tcluster_id\n1\trigidbody_1.pdb\t-9.00\t1\n2\trigidbody_2.pdb\t-8.00\t2\n3\trigidbody_3.pdb\t-7.00\t-\n' > run/$step/clustfcc.tsv
+    fi
     echo "[INFO] Module [$name] finished."
 done
 exit ${FAKE_EXIT:-0}
@@ -460,6 +468,23 @@ def test_run_progress(sync, tmp_path, caplog, monkeypatch):
     monkeypatch.setenv("FAKE_EXIT", "3")
     with pytest.raises(RuntimeError, match="exited with code 3"):
         setup.run_haddock(overwrite=True, progress=False)
+
+
+def test_run_cluster_split_without_haddock_import(sync, tmp_path, monkeypatch):
+    import importlib.util
+
+    find_spec = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *args: None if name.split(".")[0] in
+                        ("haddock", "jsonpickle") else find_spec(name, *args))
+    exe = tmp_path / "haddock3"
+    exe.write_text(FAKE_HADDOCK3)
+    exe.chmod(0o755)
+    setup = sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "dock", method="oracle",
+                                         module_params=LOW_THROUGHPUT, haddock3_exe=exe)
+    assert setup._cluster_split() == 3
+    setup.run_haddock(progress=False)
+    assert setup._top_clusters == 2                                     # clustfcc.tsv has clusters 1, 2 and '-'
+    assert "top_clusters = 2" in (setup.workdir / "config.toml").read_text()
 
 
 def test_interrupt_stops_haddock3(sync, tmp_path, monkeypatch):

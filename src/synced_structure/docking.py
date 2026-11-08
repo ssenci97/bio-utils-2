@@ -1851,6 +1851,9 @@ class HaddockDocking:
     def _top_cluster_count(self, step: int) -> int:
         """Return how many clusters to refine: a fixed fraction of the clusters found, at least a minimum.
 
+        Clusters are read from the step's clustfcc.tsv, which needs no haddock3 import; clustfcc marks unclustered
+        models with '-' and writes no table when it finds no clusters.
+
         Args:
             step: Number of the clustfcc step.
 
@@ -1860,7 +1863,10 @@ class HaddockDocking:
         Raises:
             RuntimeError: If clustfcc found no clusters.
         """
-        clusters = self.score_table(step)["cluster_id"].dropna().nunique()
+        path = self._step_path(step) / "clustfcc.tsv"
+        clusters = 0
+        if path.is_file():
+            clusters = pd.read_csv(path, sep="\t", na_values="-")["cluster_id"].dropna().nunique()
         if clusters == 0:
             raise RuntimeError("clustfcc found no clusters; lower min_population with "
                                "module_params={'clustfcc': {'min_population': 1}}.")
