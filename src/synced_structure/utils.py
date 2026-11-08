@@ -12,6 +12,8 @@ import datetime
 import importlib
 import importlib.util
 import logging
+import math
+import os
 import sys
 import time
 from collections.abc import Iterator, Mapping
@@ -54,6 +56,78 @@ def blocked_distances(xa: np.ndarray, xb: np.ndarray, block: int) -> Iterator[tu
     """
     for start in range(0, len(xa), block):
         yield start, np.linalg.norm(xa[start:start + block, None] - xb[None], axis=-1)
+
+###################################### CPU CORES
+
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+# batch schedulers export the cores granted to the job; Slurm sets SLURM_CPUS_PER_TASK only with --cpus-per-task
+SCHEDULER_CORE_VARS = ("SLURM_CPUS_PER_TASK", "SLURM_CPUS_ON_NODE", "PBS_NCPUS", "NCPUS", "LSB_DJOB_NUMPROC", "NSLOTS")
+
+
+def _cgroup_quota_cores(proc_cgroup: Path = Path("/proc/self/cgroup"), root: Path = CGROUP_ROOT) -> int | None:
+    """Return the CPU quota of this process's cgroups, rounded up to whole cores.
+
+    Reads cpu.max (cgroup v2) or cpu.cfs_quota_us and cpu.cfs_period_us (cgroup v1) of the process's cgroup and of
+    each parent, and keeps the tightest. Containers, Kubernetes, systemd slices and Slurm set these quotas.
+
+    Args:
+        proc_cgroup: The /proc/<pid>/cgroup file naming the process's cgroups.
+        root: Mount point of the cgroup hierarchy.
+
+    Returns:
+        The quota in cores, or None without a quota or on systems without cgroups.
+    """
+    try:
+        lines = proc_cgroup.read_text().splitlines()
+    except OSError:
+        return None
+    quotas: list[float] = []
+    for line in lines:
+        _, controllers, path = line.split(":", 2)
+        if controllers == "":                                   # cgroup v2: 0::/path
+            base, files = root, ["cpu.max"]
+        elif "cpu" in controllers.split(","):                   # cgroup v1: n:cpu,cpuacct:/path
+            base = next((root / name for name in ("cpu,cpuacct", "cpu") if (root / name).is_dir()), root / "cpu")
+            files = ["cpu.cfs_quota_us", "cpu.cfs_period_us"]
+        else:
+            continue
+        folder = base / path.lstrip("/")
+        # inside a cgroup namespace the process path may not exist below the mount; the mount itself is the cgroup
+        for directory in (folder, *folder.parents):
+            if not directory.is_relative_to(base):
+                break
+            try:
+                # cpu.max holds 'quota period'; v1 keeps them in two files
+                quota, period = " ".join((directory / name).read_text() for name in files).split()[:2]
+            except (OSError, ValueError):
+                continue
+            if quota not in ("max", "-1") and float(period) > 0:
+                quotas.append(float(quota) / float(period))
+    return max(1, math.ceil(min(quotas))) if quotas else None
+
+
+def core_count() -> int:
+    """Return the number of CPU cores this process may use.
+
+    os.cpu_count() counts every core of the node, also when a job or container is granted only some of them. This
+    takes the smallest of the CPU affinity mask (taskset, Slurm, numactl), the cgroup CPU quota (containers,
+    Kubernetes, systemd, Slurm), and the cores a batch scheduler grants (Slurm, PBS, LSF, SGE environment variables).
+
+    Returns:
+        The number of usable cores, at least 1.
+    """
+    limits = [len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)]
+    quota = _cgroup_quota_cores()
+    if quota is not None:
+        limits.append(quota)
+    for name in SCHEDULER_CORE_VARS:
+        value = os.environ.get(name, "")
+        # Slurm may write SLURM_CPUS_ON_NODE as '8(x2)'; the count comes first
+        digits = value.split("(")[0].strip()
+        if digits.isdigit() and int(digits) > 0:
+            limits.append(int(digits))
+            break
+    return max(1, min(limits))
 
 ###################################### CONFIG AND LOGGING
 

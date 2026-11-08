@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 from Bio.PDB import PDBParser
 
-from synced_structure import HaddockDocking, SyncedStructure
+from synced_structure import HaddockDocking, SyncedStructure, core_count
 from synced_structure.constants import HADDOCK_PRESETS, HADDOCK_SEEDED_MODULES
 from synced_structure.docking import cluster_contact_patches
 
@@ -333,6 +333,7 @@ def test_overrides_and_guards(sync, tmp_path):
     assert config["rigidbody"]["ranair"] is False and config["rigidbody"]["cmrest"] is True
     assert config["emref"]["ambig_fname"] == config["rigidbody"]["ambig_fname"]
     assert config["debug"] is True and config["ncores"] == 2 and "caprieval" not in config
+    assert sync.prepare_haddock_docking("A", ["B", "C"], workdir=tmp_path / "default").ncores == core_count()
     with pytest.raises(ValueError):
         sync.prepare_haddock_docking("A", "B", workdir=tmp_path, module_params={"rigidbody": {"iniseed": 1}})
     with pytest.raises(ValueError):

@@ -278,3 +278,49 @@ def test_old_names_are_gone(sync):
     assert not hasattr(residues, "residue_moiety")
     with pytest.raises(TypeError):
         sync["A"]["residues"]
+
+
+def _cgroup_tree(tmp_path, v2_quota=None, v1_quota=None):
+    """Return a fake /proc/self/cgroup and cgroup mount: the process sits in job/step under a v2 or v1 hierarchy."""
+    root = tmp_path / "cgroup"
+    if v2_quota is not None:
+        step = root / "job" / "step"
+        step.mkdir(parents=True)
+        (root / "job" / "cpu.max").write_text(f"{v2_quota} 100000\n")
+        (step / "cpu.max").write_text("max 100000\n")
+        line = "0::/job/step"
+    else:
+        step = root / "cpu,cpuacct" / "job"
+        step.mkdir(parents=True)
+        (step / "cpu.cfs_quota_us").write_text(f"{v1_quota}\n")
+        (step / "cpu.cfs_period_us").write_text("100000\n")
+        line = "4:cpu,cpuacct:/job\n3:memory:/job"
+    proc = tmp_path / "proc_cgroup"
+    proc.write_text(line + "\n")
+    return proc, root
+
+
+def test_cgroup_quota_cores(tmp_path):
+    assert utils._cgroup_quota_cores(*_cgroup_tree(tmp_path / "v2", v2_quota=250000)) == 3   # parent quota, rounded up
+    assert utils._cgroup_quota_cores(*_cgroup_tree(tmp_path / "v1", v1_quota=200000)) == 2
+    assert utils._cgroup_quota_cores(*_cgroup_tree(tmp_path / "v1max", v1_quota=-1)) is None
+    assert utils._cgroup_quota_cores(*_cgroup_tree(tmp_path / "small", v2_quota=10000)) == 1
+    assert utils._cgroup_quota_cores(tmp_path / "missing", tmp_path) is None
+
+
+def test_core_count_takes_the_tightest_limit(monkeypatch):
+    for name in utils.SCHEDULER_CORE_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(utils.os, "sched_getaffinity", lambda pid: set(range(16)), raising=False)
+    monkeypatch.setattr(utils, "_cgroup_quota_cores", lambda: None)
+    assert utils.core_count() == 16
+    monkeypatch.setattr(utils, "_cgroup_quota_cores", lambda: 6)
+    assert utils.core_count() == 6
+    monkeypatch.setenv("SLURM_CPUS_ON_NODE", "4(x2)")
+    assert utils.core_count() == 4
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "2")                     # per task wins over the node allocation
+    assert utils.core_count() == 2
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "")
+    monkeypatch.delenv("SLURM_CPUS_ON_NODE")
+    monkeypatch.setenv("NSLOTS", "32")                                  # never above the affinity mask or quota
+    assert utils.core_count() == 6

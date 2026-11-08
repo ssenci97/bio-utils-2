@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- `core_count()`: the CPU cores this process may use, the smallest of the affinity mask, the cgroup CPU quota
+  (containers, Kubernetes, systemd, Slurm) and the batch-scheduler allocation (`SLURM_CPUS_PER_TASK`,
+  `SLURM_CPUS_ON_NODE`, PBS `NCPUS`, LSF `LSB_DJOB_NUMPROC`, SGE `NSLOTS`). `os.cpu_count()` counts the whole node.
 - Operations map (`docs/assets/operations.png`, at most 1920 x 1080 px) on the API reference page: the parts of a
   `SyncedStructure` (and of each `ChainRecord`), with every public method linked to the parts it changes or reads, as
   a Graphviz directed graph from `docs/scripts/operations_graph.py`. An mkdocs hook (`docs/hooks.py`) redraws
@@ -23,9 +26,16 @@
   contacts from by default, so `oracle` works on mixed partners. `reference=` also accepts a `SyncedStructure`.
 - `HaddockDocking.plot_caprieval(x="irmsd", y="score", color="dockq")`: a scatter plot of caprieval metrics, returning
   `(fig, ax)`.
-- `examples/dock_barnase_barstar.py`: docking of unbound barnase (1A2P) and barstar (1A19), evaluated against the complex
-  (1BRS). `examples/dock_1kxp.py` also saves the caprieval plot.
+- `examples/docking/barnase_barstar_oracle.py`: docking of unbound barnase (1A2P) and barstar (1A19), evaluated against
+  the complex (1BRS). `examples/docking/1kxp_oracle.py` also saves the caprieval plot.
 - `run_haddock` logs progress: module starts and finishes, models written so far with the time left, and stops haddock3 when Python is interrupted. `progress=False` turns it off.
+
+### Changed: core detection
+- `HaddockDocking(ncores=None)` is the new default and uses `core_count()`; it was a fixed 4. The examples use
+  `core_count()` instead of `min(4, os.cpu_count())`.
+- Docking examples moved to `examples/docking/`: `1kxp_oracle.py`, `1kxp_ab_initio.py`, `barnase_barstar_oracle.py`
+  and `barnase_barstar_ab_initio.py` (new), with every argument of the docking calls written out. Outputs go to
+  `examples/output/docking_<system>_<method>/`.
 
 ### Changed: 3D views
 - `show_structure_3d` and `export_structure_3d` build their mmCIF with the same writer as `mmcif_string()`, with chain
@@ -44,7 +54,7 @@
 
 ### Documentation
 - A documentation site built with MkDocs, Material and mkdocstrings: installation, a quick start, guides (concepts, conventions, configuration, HADDOCK3 docking) and an API reference organised by pipeline step. It replaces `docs/index.html` and `docs/build_docs.py`.
-- `examples/dock_1kxp.py`: a HADDOCK3 re-docking of actin and vitamin D-binding protein (1KXP), compared with the crystal.
+- `examples/docking/1kxp_oracle.py`: a HADDOCK3 re-docking of actin and vitamin D-binding protein (1KXP), compared with the crystal.
 - HADDOCK3 tutorials (`docs/tutorials/haddock/`): re-docking a complex, restraints, partners from different
   structures, workflow and parameters, and analysis of the results. Their code blocks run in the tests.
 - The guide code blocks run in the tests, like the README's, and `mkdocs build --strict` is part of the test suite.

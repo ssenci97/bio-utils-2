@@ -68,7 +68,7 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["D", "ANN"]
-"examples/*" = ["D", "ANN"]
+"examples/**" = ["D", "ANN"]
 "src/synced_structure/base.py" = ["D102"]   # type-checking stubs; documented where they are implemented
 
 [tool.pydoclint]

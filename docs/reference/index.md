@@ -8,6 +8,7 @@ from synced_structure import (
     build_panel_grid, export_panels_pdf,             # panel figures
     show_side_by_side_3d,                            # 3D views
     search_rcsb, fetch_rcsb_citations,               # RCSB services
+    core_count,                                      # usable CPU cores
 )
 ```
 
@@ -22,7 +23,7 @@ The pages follow the analysis pipeline. All `SyncedStructure` methods are called
 | Interfaces (Å) | [Interfaces](interfaces.md) | `interface_complex`, `interface_residue_table`, `interface_tables` |
 | Figures | [Plots and 3D views](plots.md) | `plot_contact_map`, `plot_multi_contact_map`, `show_structure_3d` |
 | Files | [Export](export.md) | `export_structure`, `export_chain_table`, `export_contact_stat_tables`, `export_plot` |
-| Docking | [Docking](docking.md) | `prepare_haddock_docking`, `HaddockDocking` |
+| Docking | [Docking](docking.md) | `prepare_haddock_docking`, `HaddockDocking`, `core_count` |
 | Find structures | [RCSB](rcsb.md) | `search_rcsb`, `fetch_rcsb_citations` |
 
 Names say what they return; the grammar is in [Conventions](../guide/conventions.md).

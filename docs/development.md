@@ -74,6 +74,6 @@ python docs/scripts/operations_graph.py   # redraw docs/assets/operations.png by
 
 ## Releasing
 
-1. `pytest -m ""` passes, and `python examples/export_all.py` `python examples/dock_1kxp.py` and `python examples/dock_barnase_barstar.py` run.
+1. `pytest -m ""` passes, and `python examples/export_all.py` and the four scripts in `examples/docking/` run.
 2. Update `CHANGELOG.md` and the version in `pyproject.toml` and `src/synced_structure/__init__.py`.
 3. Commit, then tag: `git tag v0.1.0 && git push --tags`.

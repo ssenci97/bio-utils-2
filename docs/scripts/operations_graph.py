@@ -113,7 +113,7 @@ OPERATIONS = {
         "export_contact_strings", "export_contact_stat_tables", "export_interface_tables", "export_plot",
         "export_plot_grid", "export_structure_3d", "export_panels_pdf"]),
     "prepare": ("Prepare docking", "docking", [], ["chain"], [], ["docking"],
-                ["prepare_haddock_docking", "HaddockDocking"]),
+                ["prepare_haddock_docking", "HaddockDocking", "core_count"]),
 }
 
 # HaddockDocking box: (row title, methods), top to bottom

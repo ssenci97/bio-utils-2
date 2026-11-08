@@ -100,4 +100,4 @@ Both tables carry your chain keys and the sequence and reference positions next 
 
 haddock3 2026.7 fails when a model has no residue to mutate. Residues you pass to `add_scan_residues` must therefore stay at the interface.
 
-A complete run is in [`examples/dock_1kxp.py`](https://github.com/ssenci97/bio-utils-2/blob/main/examples/dock_1kxp.py): it re-docks actin and vitamin D-binding protein (1KXP) with the `oracle` preset and writes the restraints, scores, caprieval metrics, the interfaces of the top models next to the crystal's, and a 3D page of the best model.
+Complete runs are in [`examples/docking/`](https://github.com/ssenci97/bio-utils-2/tree/main/examples/docking), with every argument written out: 1KXP (actin and vitamin D-binding protein) and unbound barnase–barstar, each with the `oracle` and `ab-initio` presets. [`1kxp_oracle.py`](https://github.com/ssenci97/bio-utils-2/blob/main/examples/docking/1kxp_oracle.py) re-docks 1KXP and writes the restraints, scores, caprieval metrics, the interfaces of the top models next to the crystal's, and a 3D page of the best model.

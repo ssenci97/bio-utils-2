@@ -5,3 +5,5 @@ HADDOCK3 docking set up from your chains and numbering. Start with `SyncedStruct
 ::: synced_structure.SyncedStructure.prepare_haddock_docking
 
 ::: synced_structure.HaddockDocking
+
+::: synced_structure.core_count

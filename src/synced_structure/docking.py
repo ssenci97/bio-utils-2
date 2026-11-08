@@ -55,7 +55,7 @@ from .plot_style import (
     CAPRI_MARKER_SIZE, CAPRI_SIZE_IN, CAPRI_TEXT_COLOR, CAPRI_TICK_PT, CAPRI_TITLE_PT,
 )
 from .residues import is_heavy_atom
-from .utils import log_completion, log_info
+from .utils import core_count, log_completion, log_info
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -523,7 +523,7 @@ class HaddockDocking:
     _top_clusters: int | None
 
     def __init__(self, partners: Iterable[PartnerSpec], workdir: PathLike, method: str = "ab-initio",
-                 seed: int = HADDOCK_DEFAULT_SEED, ncores: int = 4, separate: str | bool = "auto",
+                 seed: int = HADDOCK_DEFAULT_SEED, ncores: int | None = None, separate: str | bool = "auto",
                  clearance_a: float = HADDOCK_CLEARANCE_A, module_params: Mapping[str, Mapping[str, Any]] | None = None,
                  global_params: Mapping[str, Any] | None = None,
                  reference: PathLike | SyncedStructure | None = "auto", caprieval: bool = True,
@@ -539,7 +539,8 @@ class HaddockDocking:
             method: 'ab-initio', 'oracle', 'targeted', or 'alascan' (no docking: refine, cluster, and alanine-scan
                 the complex as given; see alascan_tables()).
             seed: Random seed, used as iniseed in every CNS module and for the placement of partners.
-            ncores: Number of cores haddock3 may use.
+            ncores: Number of cores haddock3 may use, or None for every core this process may use (see
+                core_count(): the affinity mask, cgroup quota, or batch-scheduler allocation, not the whole node).
             separate: 'auto' moves partners apart when two share a structure ID or touch (heavy atoms within
                 clearance_a); True or False forces it. 'alascan' never moves partners.
             clearance_a: Smallest gap in A between the bounding spheres of separated partners.
@@ -562,7 +563,7 @@ class HaddockDocking:
             raise ValueError("'alascan' scans the complex as given; partners cannot be separated.")
         self.method = method
         self.seed = int(seed)
-        self.ncores = int(ncores)
+        self.ncores = core_count() if ncores is None else int(ncores)
         self.workdir = Path(workdir).expanduser().resolve()
         self.clearance_a = float(clearance_a)
         self.module_params = {str(name): dict(params) for name, params in (module_params or {}).items()}
