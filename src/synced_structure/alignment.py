@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from Bio.Align import PairwiseAligner
@@ -16,6 +16,9 @@ from .constants import (
 )
 from ._types import Record
 from .base import StructureState
+
+if TYPE_CHECKING:
+    from .chains import ChainRecord
 
 AlignmentResult = tuple[Record | None, list[Record]]
 
@@ -35,6 +38,54 @@ def make_global_aligner() -> PairwiseAligner:
         open_gap_score=GLOBAL_GAP_OPEN_SCORE,
         extend_gap_score=GLOBAL_GAP_EXTEND_SCORE,
     )
+
+
+def reference_index_map(source: str, target: str) -> dict[int, int]:
+    """Map positions of one reference sequence onto another, through a global alignment when they differ.
+
+    Args:
+        source: Source reference sequence.
+        target: Target reference sequence.
+
+    Returns:
+        {0-based source position: 0-based target position}, for aligned positions.
+    """
+    if source == target:
+        return {position: position for position in range(len(source))}
+    if not source or not target:
+        return {}
+    blocks_a, blocks_b = make_global_aligner().align(source, target)[0].aligned
+    return {int(start_a + offset): int(start_b + offset)
+            for (start_a, end_a), (start_b, _) in zip(blocks_a, blocks_b)
+            for offset in range(int(end_a - start_a))}
+
+
+def sequence_index_map(source: ChainRecord, target: ChainRecord,
+                       ref_to_ref: Mapping[int, int] | None = None) -> dict[int, int]:
+    """Map the observed residues of one chain onto those of another through their reference positions.
+
+    A chain without reference positions (a PDB file without SEQRES, for one) maps by a global alignment of the
+    observed sequences instead.
+
+    Args:
+        source: Source chain record.
+        target: Target chain record.
+        ref_to_ref: Reference position map from reference_index_map, or None to compute it.
+
+    Returns:
+        {0-based source sequence index: 0-based target sequence index}, for residues with a counterpart.
+    """
+    if not source.sequence_index_to_ref_index or not target.sequence_index_to_ref_index:
+        return reference_index_map(source.sequence, target.sequence)
+    if ref_to_ref is None:
+        ref_to_ref = reference_index_map(source.reference_sequence, target.reference_sequence)
+    target_seq = {ref: seq for seq, ref in target.sequence_index_to_ref_index.items()}
+    mapping: dict[int, int] = {}
+    for seq, ref in source.sequence_index_to_ref_index.items():
+        mapped = target_seq.get(ref_to_ref.get(ref, -1))
+        if mapped is not None:
+            mapping[seq] = mapped
+    return mapping
 
 
 def make_local_aligner(config: Mapping[str, Any]) -> PairwiseAligner:

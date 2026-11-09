@@ -204,3 +204,28 @@ CAPRI_LABELS = {"score": "HADDOCK score", "irmsd": "i-RMSD (Å)", "lrmsd": "l-RM
                 "fnat": "Fnat", "dockq": "DockQ", "caprieval_rank": "Rank"}
 HADDOCK_SCORE_COLUMNS = ["step", "model", "path", "score", "cluster_id", "cluster_rank", "model_cluster_rank",
                          "origin", "seed"]
+
+### structure comparison (Å), CAPRI and DockQ definitions
+SUPERPOSITION_ATOMS: dict[str, dict[str, tuple[str, ...]]] = {
+    "ca": {"protein": ("CA",), "nucleic": ("P",)},
+    "backbone": {"protein": ("N", "CA", "C", "O"),
+                 "nucleic": ("P", "O5'", "C5'", "C4'", "C3'", "O3'")},
+    "heavy": {},
+}
+CAPRI_CONTACT_A = 5.0
+CAPRI_INTERFACE_A = 10.0
+DOCKQ_IRMSD_SCALE_A = 1.5
+DOCKQ_LRMSD_SCALE_A = 8.5
+# (class, minimum fnat, maximum l-RMSD, maximum i-RMSD), best first; a model needs the fnat and either RMSD
+CAPRI_CLASSES = (("high", 0.5, 1.0, 1.0), ("medium", 0.3, 5.0, 2.0), ("acceptable", 0.1, 10.0, 4.0))
+CAPRI_INCORRECT = "incorrect"
+RESIDUE_MATCH_COLUMNS = [
+    "structure_id", "chain_key", "chain_id", "auth_chain_id", "pdb_resnum", "resname", "sequence_index",
+    "reference_structure_id", "reference_chain_key", "reference_chain_id", "reference_auth_chain_id",
+    "reference_pdb_resnum", "reference_resname", "reference_sequence_index",
+]
+CAPRI_COLUMNS = [
+    "structure_id", "reference_structure_id", "receptor", "ligand", "rmsd_A", "irmsd_A", "lrmsd_A", "fnat",
+    "fnonnat", "dockq", "capri_class", "n_native_contacts", "n_model_contacts", "n_interface_residues",
+    "n_matched_residues",
+]

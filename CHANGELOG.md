@@ -2,12 +2,33 @@
 
 ## Unreleased
 
+### Changed
+- Residue matching between structures moved from `HaddockDocking._position_map` to `reference_index_map` and
+  `sequence_index_map` in `alignment.py`, shared with the comparison methods. Chains without reference positions
+  (PDB files without SEQRES) now match by their observed sequences instead of not at all.
+
 ### Fixed
 - `HaddockDocking.run_haddock()` no longer fails after clustfcc with "No scored models in ..._clustfcc" when haddock3
   runs as an executable but is not importable in the Python environment: the clusters that size seletopclusts are
   counted from clustfcc's own `clustfcc.tsv` instead of its io.json.
 
 ### Added
+- Structure comparison (`ComparisonMixin`, distances in Å): `residue_match_table(reference, chain_map=None)` matches
+  the residues of two structures through reference positions (global alignment when reference sequences differ,
+  observed sequences when a chain has none); `rmsd_metrics(reference, chains=None, atoms="ca" | "backbone" | "heavy",
+  fit_chains=None)` returns the RMSD after a Kabsch superposition with its rotation and translation;
+  `apply_superposition(reference)` moves the structure onto the reference. `capri_metrics(reference, receptor, ligand)`
+  returns Fnat, Fnon-nat, i-RMSD, l-RMSD, backbone RMSD, DockQ and the CAPRI class; `capri_table(models, ...)` scores
+  several models (structures or paths) against a reference. Values match haddock3's caprieval on protein-protein
+  complexes within 0.05 Å.
+- `plot_chain_graph()`: chains as nodes (colored as in the 3D views, sized by residue count) joined by edges as thick
+  and dark as their residue contacts, with spring or circular layout and no new dependency; `chain_graph_table()`
+  holds the counts. With `scheme="ca"` the counts are computed per chain pair in bounded memory.
+- `show_superposition_3d(reference)`: a superposed copy of the structure drawn over the reference in one 3Dmol view,
+  with the RMSD in the title. `show_structure_3d(extra_models=...)` draws further models in the same view.
+- Guide page `docs/guide/comparison.md`, API page `docs/reference/comparison.md`, the example
+  `examples/compare_structures.py`, and `tests/test_comparison.py` (with a haddock-marked cross-check against
+  haddock3's CAPRI code).
 - `show_structure_3d` (and `export_structure_3d`): `highlight={chain: residues}` draws the listed residues normally and
   every other residue at the opacity `dim_alpha` (default 0.25); `highlight_sticks=True` also shows the side chains of
   the highlighted residues as sticks. Residues are PDB numbers or text such as `"10-25,40"`.

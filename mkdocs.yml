@@ -14,6 +14,7 @@ nav:
       - Concepts: guide/concepts.md
       - Conventions: guide/conventions.md
       - Configuration: guide/configuration.md
+      - Structure comparison: guide/comparison.md
       - HADDOCK3 docking: guide/docking.md
   - Tutorials:
       - HADDOCK3 docking:
@@ -30,6 +31,7 @@ nav:
       - Residues and alignment: reference/residues.md
       - Contacts: reference/contacts.md
       - Interfaces: reference/interfaces.md
+      - Comparison: reference/comparison.md
       - Plots and 3D views: reference/plots.md
       - Export: reference/export.md
       - Docking: reference/docking.md

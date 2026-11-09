@@ -10,7 +10,9 @@ from Bio.PDB.Structure import Structure
 
 from ._types import PathLike
 from .alignment import AlignmentMixin, make_global_aligner, make_local_aligner
+from .chain_graph import ChainGraphMixin
 from .chains import ChainMixin
+from .comparison import ComparisonMixin
 from .constants import CONFIG_SECTION, DEFAULT_CONFIG, KEY_MODES
 from .contact_matrix import ContactMatrixMixin
 from .contact_plots import ContactPlotMixin
@@ -29,8 +31,8 @@ from .viz3d import Viz3DMixin
 
 
 class SyncedStructure(LoaderMixin, MetadataMixin, ChainMixin, AlignmentMixin, ResidueMixin, ContactMixin,
-                      ContactMatrixMixin, ContactStatsMixin, ContactPlotMixin, ExportMixin, InterfaceMixin, Viz3DMixin,
-                      DockingMixin):
+                      ContactMatrixMixin, ContactStatsMixin, ContactPlotMixin, ChainGraphMixin, ExportMixin, InterfaceMixin,
+                      ComparisonMixin, Viz3DMixin, DockingMixin):
     """A structure whose chains are held by author or label IDs, with mapping, contacts, interfaces, and plots."""
 
     def __init__(self, structure: Structure, structure_id: str = "structure", mmcif_dict: dict[str, Any] | None = None,

@@ -49,7 +49,7 @@ from .constants import (
     HADDOCK_RESTRAINT_KINDS, HADDOCK_RESTRAINT_MODULES, HADDOCK_SCORE_COLUMNS, HADDOCK_SEEDED_MODULES, HADDOCK_SEGIDS,
     HADDOCK_TBL_TERMS_PER_LINE, HADDOCK_TOP_CLUSTER_FRACTION, POLYMER_MOIETIES,
 )
-from .alignment import make_global_aligner
+from .alignment import reference_index_map, sequence_index_map
 from .plot_style import (
     CAPRI_ALPHA, CAPRI_AXIS_COLOR, CAPRI_CMAP, CAPRI_EDGE_COLOR, CAPRI_GRID_COLOR, CAPRI_LABEL_PT, CAPRI_MARKER_COLOR,
     CAPRI_MARKER_SIZE, CAPRI_SIZE_IN, CAPRI_TEXT_COLOR, CAPRI_TICK_PT, CAPRI_TITLE_PT,
@@ -1043,14 +1043,9 @@ class HaddockDocking:
         source_record, target_record = source.chains[source_key], target_structure.chains[key]
         if source is target_structure and source_key == key:
             return {seq: seq for seq in range(len(source_record.residues))}
-        source_ref, target_ref = source_record.reference_sequence, target_record.reference_sequence
-        if source_ref == target_ref:
-            ref_to_ref = {ref: ref for ref in range(len(source_ref))}
-        else:
-            blocks_a, blocks_b = make_global_aligner().align(source_ref, target_ref)[0].aligned
-            ref_to_ref = {start_a + offset: start_b + offset
-                          for (start_a, end_a), (start_b, _) in zip(blocks_a, blocks_b)
-                          for offset in range(end_a - start_a)}
+        ref_to_ref = reference_index_map(source_record.reference_sequence, target_record.reference_sequence)
+        if source_record.reference_sequence != target_record.reference_sequence:
+            source_ref, target_ref = source_record.reference_sequence, target_record.reference_sequence
             same = sum(source_ref[a] == target_ref[b] for a, b in ref_to_ref.items())
             pair = (str(source.structure_id), source_key, target)
             if pair not in self._aligned_pairs:
@@ -1058,13 +1053,7 @@ class HaddockDocking:
                 log_info(f"HADDOCK3: reference sequences of {source.structure_id} chain {source_key} and "
                          f"{target_structure.structure_id} chain {key} differ; matched by alignment "
                          f"({same} identical of {len(target_ref)} positions).")
-        target_seq = {ref: seq for seq, ref in target_record.sequence_index_to_ref_index.items()}
-        mapping: dict[int, int] = {}
-        for seq, ref in source_record.sequence_index_to_ref_index.items():
-            mapped = target_seq.get(ref_to_ref.get(ref, -1))
-            if mapped is not None:
-                mapping[seq] = mapped
-        return mapping
+        return sequence_index_map(source_record, target_record, ref_to_ref)
 
     def partner_contact_map(self, cutoff: float = CONTACTS_CUTOFF_NM, scheme: str = "ca",
                               source: SyncedStructure | None = None, chain_map: Mapping[ChainSpec, str] | None = None,

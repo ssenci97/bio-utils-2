@@ -19,3 +19,5 @@ Residue contacts computed with MDTraj (distances in **nm**), contact strings and
 ::: synced_structure.SyncedStructure.contact_stat_tables
 
 ::: synced_structure.SyncedStructure.contact_point_trajectory
+
+::: synced_structure.SyncedStructure.chain_graph_table

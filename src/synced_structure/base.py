@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from ._types import ChainPair, ChainRefs, Moieties, Record, Self
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     import pandas as pd
     from Bio.Align import PairwiseAligner
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from IPython.display import HTML
 
     from .chains import ChainRecord
+    from .structure import SyncedStructure
 
 ###################################### SHARED STATE
 
@@ -113,4 +114,14 @@ class StructureState:
                               chain_palette: Sequence[str] = ..., viz_format: str = ..., js_url: str = ...,
                               label_js: str = ..., angles_js: str = ..., title_font_px: int = ...,
                               angles_font_px: int = ..., highlight: dict[str, Sequence[int] | str] | None = ...,
-                              dim_alpha: float = ..., highlight_sticks: bool = ...) -> HTML: ...
+                              dim_alpha: float = ..., highlight_sticks: bool = ...,
+                              extra_models: Sequence[Record] | None = ...) -> HTML: ...
+        def _chain_colors(self, colors: dict[str, str] | None = ...,
+                          chain_palette: Sequence[str] = ...) -> dict[str, str]: ...
+
+        # comparison.py
+        def rmsd_metrics(self, reference: SyncedStructure, chains: str | ChainRefs | None = ...,
+                         chain_map: Mapping[str, str] | None = ..., atoms: str = ...,
+                         fit_chains: str | ChainRefs | None = ..., superpose: bool = ...) -> Record: ...
+        def apply_superposition(self, reference: SyncedStructure, chains: str | ChainRefs | None = ...,
+                                chain_map: Mapping[str, str] | None = ..., atoms: str = ...) -> Self: ...

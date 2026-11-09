@@ -12,14 +12,19 @@ import json
 import math
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from html import escape
+from typing import TYPE_CHECKING, Any
 
 from IPython.display import HTML
 
+from ._types import ChainRefs, Record
 from .base import StructureState
 from .constants import PALETTE
 from .utils import log_completion, log_info
+
+if TYPE_CHECKING:
+    from .structure import SyncedStructure
 
 VIZ_SIZE_PX = 500
 VIZ_PANEL_SIZE_PX = 350
@@ -27,6 +32,8 @@ VIZ_BACKGROUND = "white"
 VIZ_STYLES = ("cartoon", "stick", "sphere", "line")
 VIZ_FORMAT = "cif"
 VIZ_DIM_ALPHA = 0.25
+VIZ_REFERENCE_COLOR = "#9a9a9a"
+VIZ_REFERENCE_OPACITY = 0.6
 VIZ_JS_URL = "https://3dmol.org/build/3Dmol-min.js"
 DEFAULT_SHOW_ANGLES = True
 TITLE_FONT_PX = 16
@@ -58,7 +65,7 @@ VIZ_PAGE_TEMPLATE = """<!doctype html>
 VIZ_TEMPLATE = """<div id="__ELEMENT__" class="viz3d-view" style="position:relative;width:__SIZE__px;height:__SIZE__px"><div id="__ELEMENT__-view" style="width:100%;height:100%"></div>__OVERLAY__</div>
 <script>
 (function(){
-var id="__ELEMENT__",text=__TEXT__,pal=__PALETTE__,pose=__POSE__,hl=__HIGHLIGHT__,dim=__DIM__,sticks=__STICKS__;
+var id="__ELEMENT__",text=__TEXT__,pal=__PALETTE__,pose=__POSE__,hl=__HIGHLIGHT__,dim=__DIM__,sticks=__STICKS__,extra=__EXTRA__;
 if(!window.$3Dmol&&!document.getElementById("3dmol-js")){var s=document.createElement("script");s.id="3dmol-js";s.src="__JS_URL__";document.head.appendChild(s);}
 function box(){return document.getElementById(id+"-view");}
 function out(){return document.getElementById(id+"-angles");}
@@ -82,6 +89,10 @@ sel.forEach(function(a){if(!(prot[a.resi]&&["N","C","O","OXT"].indexOf(a.atom)>=
 if(ser.length){v.addStyle({serial:ser},{stick:{color:pal[c]}});}
 }
 }
+extra.forEach(function(e){
+var m=v.addModel(e.data,"__FORMAT__");
+for(var c in e.pal){m.setStyle({chain:c},{__STYLE__:{color:e.pal[c],opacity:e.opacity}});}
+});
 v.setBackgroundColor(__BACKGROUND__);
 v.setClickable({},true,__LABEL__);
 v.zoomTo();
@@ -258,7 +269,8 @@ class Viz3DMixin(StructureState):
                      background: str, size: int, show_angles: bool, viz_format: str = VIZ_FORMAT,
                      js_url: str = VIZ_JS_URL, label_js: str = CHAIN_LABEL_JS, angles_js: str = ANGLES_JS,
                      angles_font_px: int = ANGLES_FONT_PX, highlight: dict[str, list[int]] | None = None,
-                     dim_alpha: float = VIZ_DIM_ALPHA, highlight_sticks: bool = False) -> str:
+                     dim_alpha: float = VIZ_DIM_ALPHA, highlight_sticks: bool = False,
+                     extra_models: Sequence[Record] | None = None) -> str:
         """Return HTML for a 3Dmol viewer posed at the input angles, with reset and current angle buttons.
 
         Args:
@@ -277,13 +289,15 @@ class Viz3DMixin(StructureState):
             highlight: Chain key to residue numbers drawn at full opacity, or None to draw everything normally.
             dim_alpha: Opacity of the residues that are not highlighted.
             highlight_sticks: Whether highlighted residues also show their side chains as sticks.
+            extra_models: Further models drawn in the same view, each {'data': structure text, 'pal': chain to
+                color, 'opacity': 0 to 1}, or None.
 
         Returns:
             The viewer HTML with its script.
         """
         key = (self.structure_id, tuple(angles), chain_id, sorted(palette.items()), style, background, size, show_angles,
                viz_format, js_url, label_js, angles_js, angles_font_px, sorted((highlight or {}).items()), dim_alpha,
-               highlight_sticks)
+               highlight_sticks, hashlib.sha1(json.dumps(extra_models or []).encode()).hexdigest())
         element = "viz_" + hashlib.sha1(repr(key).encode()).hexdigest()[:12]
         text = f"x {angles[0]}\u00b0 y {angles[1]}\u00b0 z {angles[2]}\u00b0"
         overlay = self._angles_overlay_html(element, text, angles_font_px) if show_angles else ""
@@ -294,7 +308,7 @@ class Viz3DMixin(StructureState):
             "__POSE__": json.dumps(list(_quaternion(angles))), "__SHOW__": "true" if show_angles else "false",
             "__ANGLES__": angles_js, "__TEXT__": json.dumps(text),
             "__HIGHLIGHT__": json.dumps(highlight), "__DIM__": json.dumps(dim_alpha),
-            "__STICKS__": "true" if highlight_sticks else "false",
+            "__STICKS__": "true" if highlight_sticks else "false", "__EXTRA__": json.dumps(list(extra_models or [])),
             "__CIF__": json.dumps(self._mmcif_text(None if chain_id is None else [chain_id], key_as_author=True)),
         }
         html = VIZ_TEMPLATE
@@ -311,7 +325,8 @@ class Viz3DMixin(StructureState):
                           viz_format: str = VIZ_FORMAT, js_url: str = VIZ_JS_URL, label_js: str = CHAIN_LABEL_JS,
                           angles_js: str = ANGLES_JS, title_font_px: int = TITLE_FONT_PX,
                           angles_font_px: int = ANGLES_FONT_PX, highlight: dict[str, Sequence[int] | str] | None = None,
-                          dim_alpha: float = VIZ_DIM_ALPHA, highlight_sticks: bool = False) -> HTML:
+                          dim_alpha: float = VIZ_DIM_ALPHA, highlight_sticks: bool = False,
+                          extra_models: Sequence[Record] | None = None) -> HTML:
         """Show the structure in Jupyter as a clickable 3Dmol.js view, with an optional centered title.
 
         Args:
@@ -335,6 +350,8 @@ class Viz3DMixin(StructureState):
                 Unloaded chains are ignored. None draws everything normally.
             dim_alpha: Opacity from 0 to 1 of the residues that are not highlighted; only used with highlight.
             highlight_sticks: Whether highlighted residues also show their side chains as sticks.
+            extra_models: Further models drawn in the same view, each {'data': mmCIF text, 'pal': chain to color,
+                'opacity': 0 to 1}, or None; show_superposition_3d uses it for the reference.
 
         Returns:
             An IPython HTML object with the title and the view.
@@ -353,13 +370,58 @@ class Viz3DMixin(StructureState):
         palette = self._chain_colors(colors, chain_palette)
         html = self._viewer_html(angles, chain_id, palette, style, background, size, show_angles,
                                  viz_format, js_url, label_js, angles_js, angles_font_px,
-                                 self._highlight_numbers(highlight), dim_alpha, highlight_sticks)
+                                 self._highlight_numbers(highlight), dim_alpha, highlight_sticks, extra_models)
         if title:
             heading = (f'<div class="viz3d-title" style="width:{size}px;margin:0 auto 4px auto;text-align:center;font-family:sans-serif;'
                        f'font-size:{title_font_px}px;font-weight:bold">{escape(str(title))}</div>')
             html = heading + html
         log_completion(start, f"Rendered view of {self.structure_id} at angles {tuple(angles)}")
         return HTML(html)
+
+    def show_superposition_3d(self, reference: SyncedStructure, chains: str | ChainRefs | None = None,
+                              chain_map: Mapping[str, str] | None = None, atoms: str = "ca",
+                              angles: Sequence[float] = (0, 0, 0), colors: dict[str, str] | None = None,
+                              reference_color: str = VIZ_REFERENCE_COLOR,
+                              reference_opacity: float = VIZ_REFERENCE_OPACITY, title: str | None = None,
+                              style: str = "cartoon", size: int = VIZ_SIZE_PX,
+                              highlight: dict[str, Sequence[int] | str] | None = None,
+                              **view_kwargs: Any) -> HTML:
+        """Show this structure superposed onto a reference in one 3Dmol.js view, the reference in one color.
+
+        A superposed copy is drawn; this structure does not move. The default title gives the RMSD.
+
+        Args:
+            reference: Reference structure, drawn in reference_color.
+            chains: Chains of this structure to superpose on, or None for every chain with a counterpart.
+            chain_map: {chain of this structure: reference chain}, or None to pair chains with the same key.
+            atoms: Atoms fitted: 'ca', 'backbone', or 'heavy'.
+            angles: Rotation (x, y, z) in degrees.
+            colors: Chain ID to color for this structure; other chains take palette colors.
+            reference_color: Color of every reference chain.
+            reference_opacity: Opacity from 0 to 1 of the reference.
+            title: Title above the view, or None for the structure IDs and RMSD.
+            style: Representation: 'cartoon', 'stick', 'sphere' or 'line'.
+            size: Width and height of the view in pixels.
+            highlight: Residues of this structure to highlight, as in show_structure_3d.
+            **view_kwargs: Other show_structure_3d arguments, such as background or dim_alpha.
+
+        Returns:
+            An IPython HTML object with the title and the view.
+
+        Raises:
+            ValueError: If reference_opacity is outside 0 to 1.
+        """
+        if not 0 <= reference_opacity <= 1:
+            raise ValueError("reference_opacity must be between 0 and 1.")
+        moved = self.subset_chains(self.chain_ids, structure_id=self.structure_id)
+        moved.apply_superposition(reference, chains, chain_map, atoms)
+        rmsd = self.rmsd_metrics(reference, chains, chain_map, atoms)
+        extra = [{"data": reference._mmcif_text(None, key_as_author=True),
+                  "pal": dict.fromkeys(reference.chain_ids, reference_color), "opacity": reference_opacity}]
+        title = title or (f"{self.structure_id} on {reference.structure_id}: RMSD {rmsd['rmsd_A']:.2f} Å "
+                          f"({rmsd['n_atoms']} {atoms} atoms)")
+        return moved.show_structure_3d(angles=angles, colors=colors, title=title, style=style, size=size,
+                                       highlight=highlight, extra_models=extra, **view_kwargs)
 
 
 ###################################### LAYOUT

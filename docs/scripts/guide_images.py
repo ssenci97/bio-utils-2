@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render the PNG figures of the guides into docs/assets/ from the bundled 1AAY structure.
 
-Writes contact_map_1aay.png, partners_two_plus_one.png, highlight_dim_alpha.png and, when the docking example has been
+Writes contact_map_1aay.png, partners_two_plus_one.png, highlight_dim_alpha.png, chain_graph_1brs.png (from 1BRS) and, when the docking example has been
 run, docking_caprieval_1aay.png. The 3D views are interactive HTML, so highlight_dim_alpha.png is a static 2D picture
 of what highlight= and dim_alpha= do.
 
@@ -25,6 +25,7 @@ from synced_structure import SyncedStructure  # noqa: E402
 ###################################### Configuration
 ROOT = Path(__file__).resolve().parents[2]
 CIF = ROOT / "tests" / "data" / "1AAY.cif"
+BRS = ROOT / "tests" / "data" / "1BRS.cif"
 CAPRIEVAL = ROOT / "examples" / "output" / "docking_1AAY_oracle" / "tables" / "1AAY_oracle_caprieval_models.tsv"
 ASSETS = ROOT / "docs" / "assets"
 DPI = 130
@@ -125,6 +126,19 @@ def partners_picture() -> Path:
     return path
 
 
+def chain_graph_picture() -> Path:
+    """Draw the chain contact graph of 1BRS, three barnase-barstar complexes.
+
+    Returns:
+        The PNG path.
+    """
+    fig, _ = SyncedStructure.from_path(BRS).plot_chain_graph()
+    path = ASSETS / "chain_graph_1brs.png"
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
 def caprieval_picture() -> Path | None:
     """Draw HADDOCK score against i-RMSD from the docking example's caprieval table, when it exists.
 
@@ -153,7 +167,8 @@ def render() -> list[Path]:
         The PNG paths written.
     """
     structure = SyncedStructure.from_path(CIF)
-    paths = [contact_map(structure), highlight_picture(structure), partners_picture(), caprieval_picture()]
+    paths = [contact_map(structure), highlight_picture(structure), partners_picture(), chain_graph_picture(),
+             caprieval_picture()]
     return [path for path in paths if path is not None]
 
 

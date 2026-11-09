@@ -99,14 +99,17 @@ OPERATIONS = {
     "contacts": ("Contacts (nm)", "read", [], ["chain", "mapping"], [], ["tables", "arrays", "values"], [
         "contact_table", "contact_stat_tables", "contact_string", "reference_contact_string", "masked_sequence",
         "reference_masked_sequence", "contact_matrix", "block_contact_matrix", "contact_point_trajectory",
-        "chain_partner_map"]),
+        "chain_partner_map", "chain_graph_table"]),
     "interfaces": ("Interfaces (Å)", "read", [], ["chain", "mapping"], [], ["tables", "values", "new"], [
         "interface_metrics", "interface_tables", "interface_residue_table", "interface_partner_map",
         "chain_partner_metrics", "chain_partner_table", "interface_complex", "chain_partner_structures"]),
+    "compare": ("Compare to a reference (Å)", "read", [], ["chain", "mapping"], [], ["tables", "values"], [
+        "residue_match_table", "rmsd_metrics", "capri_metrics", "capri_table"]),
+    "superpose": ("Superpose", "write", [], ["mapping"], ["structure"], [], ["apply_superposition"]),
     "subset": ("Subset", "read", [], ["chain"], [], ["new"], ["subset_chains"]),
     "show": ("Plot & 3D", "read", [], ["chain"], [], ["figures"], [
-        "plot_contact_map", "plot_multi_contact_map", "build_panel_grid", "show_structure_3d",
-        "show_side_by_side_3d"]),
+        "plot_contact_map", "plot_multi_contact_map", "plot_chain_graph", "build_panel_grid", "show_structure_3d",
+        "show_superposition_3d", "show_side_by_side_3d"]),
     "export": ("Export", "read", ["figures"], ["structure", "notes"], [], ["files"], [
         "export_structure", "mmcif_string", "pdb_string", "export_chain_table", "export_chain_residue_table",
         "export_residue_table", "export_moiety_table", "export_alignment_table", "export_alignment_column_table",
@@ -133,8 +136,8 @@ DOCKING = [
 # columns left to right (rankdir LR), each ordered top to bottom; parts are placed by the cluster
 ROWS = [
     ["rcsb", "pdb_id", "file", "biopython"],
-    ["load", "remap", "annotate", "chainset", "renumber"],
-    ["lookup", "tabulate", "contacts", "interfaces", "subset", "show", "export", "prepare"],
+    ["load", "remap", "annotate", "chainset", "renumber", "superpose"],
+    ["lookup", "tabulate", "contacts", "interfaces", "compare", "subset", "show", "export", "prepare"],
     ["values", "tables", "arrays", "new", "figures", "files", "docking"],
 ]
 
