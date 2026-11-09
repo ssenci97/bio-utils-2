@@ -8,6 +8,11 @@
   counted from clustfcc's own `clustfcc.tsv` instead of its io.json.
 
 ### Added
+- `show_structure_3d` (and `export_structure_3d`): `highlight={chain: residues}` draws the listed residues normally and
+  every other residue at the opacity `dim_alpha` (default 0.25); `highlight_sticks=True` also shows the side chains of
+  the highlighted residues as sticks. Residues are PDB numbers or text such as `"10-25,40"`.
+- Docking guide section on partners with several chains (two chains against one chain), with tests on 1AAY and the
+  example `examples/docking/1aay_two_chains_oracle.py`.
 - `core_count()`: the CPU cores this process may use, the smallest of the affinity mask, the cgroup CPU quota
   (containers, Kubernetes, systemd, Slurm) and the batch-scheduler allocation (`SLURM_CPUS_PER_TASK`,
   `SLURM_CPUS_ON_NODE`, PBS `NCPUS`, LSF `LSB_DJOB_NUMPROC`, SGE `NSLOTS`). `os.cpu_count()` counts the whole node.

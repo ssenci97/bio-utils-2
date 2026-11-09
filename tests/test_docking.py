@@ -19,6 +19,7 @@ from synced_structure.docking import cluster_contact_patches
 DATA = Path(__file__).parent / "data"
 CIF = DATA / "1AAY.cif"
 LOW_THROUGHPUT = {"rigidbody": {"sampling": 8}, "clustfcc": {"min_population": 1}}
+TINY_THROUGHPUT = {"rigidbody": {"sampling": 4}, "clustfcc": {"min_population": 1}}
 
 
 @pytest.fixture
@@ -63,6 +64,24 @@ def test_partner_renumbered_when_author_numbers_collide(sync, tmp_path):
     assert duplex.loc["B"].tolist() == [1, 11]
     assert duplex.loc["C"].tolist() == [22, 32]
     assert frame.loc[frame["segid"] == "A", "haddock_resid"].min() == 103
+
+
+def test_two_chains_against_one_chain(sync, tmp_path):
+    setup = sync.prepare_haddock_docking(["B", "C"], "A", workdir=tmp_path, method="oracle", seed=7)
+    frame = setup.residue_table()
+    assert frame.groupby("segid")["chain_key"].unique().map(list).to_dict() == {"A": ["B", "C"], "B": ["A"]}
+    assert not frame.duplicated(["segid", "haddock_resid"]).any()
+    assert len(setup.input_paths["molecules"]) == 2 and len(_config(setup)["molecules"]) == 2
+    setup.add_contact_restraints(kind="ambiguous")
+    text = setup.restraint_text("ambiguous")
+    assert "and segid A)" in text and "and segid B)" in text
+    assert "segid C" not in text
+
+
+def test_three_chains_as_three_partners(sync, tmp_path):
+    setup = sync.prepare_haddock_docking("A", "B", "C", workdir=tmp_path, method="ab-initio", seed=7)
+    assert setup.residue_table()["segid"].unique().tolist() == ["A", "B", "C"]
+    assert len(_config(setup)["molecules"]) == 3
 
 
 def test_partners_validated(sync, tmp_path):
@@ -731,6 +750,21 @@ def test_haddock_oracle_run(sync, tmp_path, caplog):
     assert sorted(docked.chain_ids) == ["A", "B", "C"]
     assert docked.chain_table()["mapping_fraction"].eq(1.0).all()
     setup.run_haddock(overwrite=True)
+
+
+@pytest.mark.haddock
+@needs_haddock
+def test_haddock_two_chains_against_one_chain_run(sync, tmp_path):
+    setup = sync.prepare_haddock_docking(["B", "C"], "A", workdir=tmp_path, method="oracle", seed=7, ncores=2,
+                                         module_params=TINY_THROUGHPUT)
+    setup.add_contact_restraints(kind="unambiguous", scheme="sidechain", cutoff=0.45)
+    setup.run_haddock()
+    clusters = setup.score_table("clustfcc")["cluster_id"].nunique()
+    assert setup._top_clusters == min(clusters, 5)
+    assert len(setup.score_table("rigidbody")) == 4
+    paths = setup.docked_model_paths()
+    assert paths and all(path.is_file() for path in paths)
+    assert sorted(setup.load_docked_model(0).chain_ids) == ["A", "B", "C"]
 
 
 @pytest.mark.haddock

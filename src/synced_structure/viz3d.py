@@ -1,6 +1,6 @@
 """Jupyter 3D views of synchronized structures using 3Dmol.js.
 
-Views are clickable, with a centered title above them, per-chain colors, representation styles, backgrounds, sizes, rotation angles with reset and current readout buttons, and side-by-side layouts.
+Views are clickable, with a centered title above them, per-chain colors, residue highlighting with the other residues drawn at a reduced alpha, representation styles, backgrounds, sizes, rotation angles with reset and current readout buttons, and side-by-side layouts.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ VIZ_PANEL_SIZE_PX = 350
 VIZ_BACKGROUND = "white"
 VIZ_STYLES = ("cartoon", "stick", "sphere", "line")
 VIZ_FORMAT = "cif"
+VIZ_DIM_ALPHA = 0.25
 VIZ_JS_URL = "https://3dmol.org/build/3Dmol-min.js"
 DEFAULT_SHOW_ANGLES = True
 TITLE_FONT_PX = 16
@@ -57,7 +58,7 @@ VIZ_PAGE_TEMPLATE = """<!doctype html>
 VIZ_TEMPLATE = """<div id="__ELEMENT__" class="viz3d-view" style="position:relative;width:__SIZE__px;height:__SIZE__px"><div id="__ELEMENT__-view" style="width:100%;height:100%"></div>__OVERLAY__</div>
 <script>
 (function(){
-var id="__ELEMENT__",text=__TEXT__,pal=__PALETTE__,pose=__POSE__;
+var id="__ELEMENT__",text=__TEXT__,pal=__PALETTE__,pose=__POSE__,hl=__HIGHLIGHT__,dim=__DIM__,sticks=__STICKS__;
 if(!window.$3Dmol&&!document.getElementById("3dmol-js")){var s=document.createElement("script");s.id="3dmol-js";s.src="__JS_URL__";document.head.appendChild(s);}
 function box(){return document.getElementById(id+"-view");}
 function out(){return document.getElementById(id+"-angles");}
@@ -68,7 +69,19 @@ b.innerHTML="";
 var v=$3Dmol.createViewer(b,{});
 b.__viewer=v;
 v.addModel(__CIF__,"__FORMAT__");
-for(var c in pal){v.setStyle({chain:c},{__STYLE__:{color:pal[c]}});}
+for(var c in pal){
+if(!hl){v.setStyle({chain:c},{__STYLE__:{color:pal[c]}});continue;}
+v.setStyle({chain:c},{__STYLE__:{color:pal[c],opacity:dim}});
+var r=hl[c];
+if(!r||!r.length){continue;}
+v.setStyle({chain:c,resi:r},{__STYLE__:{color:pal[c]}});
+if(sticks){
+var sel=v.selectedAtoms({chain:c,resi:r}),prot={},ser=[];
+sel.forEach(function(a){if(a.atom==="CA"){prot[a.resi]=1;}});
+sel.forEach(function(a){if(!(prot[a.resi]&&["N","C","O","OXT"].indexOf(a.atom)>=0)){ser.push(a.serial);}});
+if(ser.length){v.addStyle({serial:ser},{stick:{color:pal[c]}});}
+}
+}
 v.setBackgroundColor(__BACKGROUND__);
 v.setClickable({},true,__LABEL__);
 v.zoomTo();
@@ -146,6 +159,31 @@ def _quaternion(angles: Sequence[float]) -> Quaternion:
 
     return mul(mul(axis(2, angles[2]), axis(1, angles[1])), axis(0, angles[0]))
 
+###################################### HIGHLIGHT
+
+
+def _residue_numbers(spec: Sequence[int] | str) -> list[int]:
+    """Return sorted residue numbers from a list or a text such as "10-25,40".
+
+    Args:
+        spec: Residue numbers, or text of numbers and inclusive ranges separated by commas.
+
+    Returns:
+        The sorted unique residue numbers.
+
+    Raises:
+        ValueError: If the text holds something other than non-negative numbers and ranges.
+    """
+    if not isinstance(spec, str):
+        return sorted({int(number) for number in spec})
+    numbers: set[int] = set()
+    for part in spec.replace(" ", "").split(","):
+        first, _, last = part.partition("-")
+        if not first.isdigit() or (last and not last.isdigit()):
+            raise ValueError(f"Invalid residue selection {part!r}; use numbers and ranges such as '10-25,40'.")
+        numbers.update(range(int(first), int(last or first) + 1))
+    return sorted(numbers)
+
 ###################################### COLOR HELPERS
 
 
@@ -169,6 +207,30 @@ class Viz3DMixin(StructureState):
             log_info(f"{self.structure_id}: colors ignored for unloaded chains {ignored}")
         return {cid: colors.get(cid, chain_palette[index % len(chain_palette)])
                 for index, cid in enumerate(self.chain_ids)}
+
+    def _highlight_numbers(self, highlight: dict[str, Sequence[int] | str] | None) -> dict[str, list[int]] | None:
+        """Return the residues to highlight per loaded chain key, ignoring unloaded chains.
+
+        Args:
+            highlight: Chain ID (key, label or author) to residue numbers or text such as "10-25,40", or None.
+
+        Returns:
+            Chain key to sorted PDB residue numbers, or None when nothing is to be highlighted.
+        """
+        if not highlight:
+            return None
+        selected: dict[str, list[int]] = {}
+        ignored = []
+        for chain_id, spec in highlight.items():
+            try:
+                key = self._chain_key(chain_id)
+            except KeyError:
+                ignored.append(str(chain_id))
+                continue
+            selected[key] = sorted(set(selected.get(key, [])) | set(_residue_numbers(spec)))
+        if ignored:
+            log_info(f"{self.structure_id}: highlight ignored for unloaded chains {sorted(ignored)}")
+        return selected
 
 ###################################### OVERLAY
 
@@ -195,7 +257,8 @@ class Viz3DMixin(StructureState):
     def _viewer_html(self, angles: Sequence[float], chain_id: str | None, palette: dict[str, str], style: str,
                      background: str, size: int, show_angles: bool, viz_format: str = VIZ_FORMAT,
                      js_url: str = VIZ_JS_URL, label_js: str = CHAIN_LABEL_JS, angles_js: str = ANGLES_JS,
-                     angles_font_px: int = ANGLES_FONT_PX) -> str:
+                     angles_font_px: int = ANGLES_FONT_PX, highlight: dict[str, list[int]] | None = None,
+                     dim_alpha: float = VIZ_DIM_ALPHA, highlight_sticks: bool = False) -> str:
         """Return HTML for a 3Dmol viewer posed at the input angles, with reset and current angle buttons.
 
         Args:
@@ -211,12 +274,16 @@ class Viz3DMixin(StructureState):
             label_js: JavaScript click handler that toggles atom labels.
             angles_js: JavaScript that converts a quaternion into x, y, z degrees.
             angles_font_px: Font size of the angle overlay in pixels.
+            highlight: Chain key to residue numbers drawn at full opacity, or None to draw everything normally.
+            dim_alpha: Opacity of the residues that are not highlighted.
+            highlight_sticks: Whether highlighted residues also show their side chains as sticks.
 
         Returns:
             The viewer HTML with its script.
         """
         key = (self.structure_id, tuple(angles), chain_id, sorted(palette.items()), style, background, size, show_angles,
-               viz_format, js_url, label_js, angles_js, angles_font_px)
+               viz_format, js_url, label_js, angles_js, angles_font_px, sorted((highlight or {}).items()), dim_alpha,
+               highlight_sticks)
         element = "viz_" + hashlib.sha1(repr(key).encode()).hexdigest()[:12]
         text = f"x {angles[0]}\u00b0 y {angles[1]}\u00b0 z {angles[2]}\u00b0"
         overlay = self._angles_overlay_html(element, text, angles_font_px) if show_angles else ""
@@ -226,6 +293,8 @@ class Viz3DMixin(StructureState):
             "__BACKGROUND__": json.dumps(background), "__LABEL__": label_js,
             "__POSE__": json.dumps(list(_quaternion(angles))), "__SHOW__": "true" if show_angles else "false",
             "__ANGLES__": angles_js, "__TEXT__": json.dumps(text),
+            "__HIGHLIGHT__": json.dumps(highlight), "__DIM__": json.dumps(dim_alpha),
+            "__STICKS__": "true" if highlight_sticks else "false",
             "__CIF__": json.dumps(self._mmcif_text(None if chain_id is None else [chain_id], key_as_author=True)),
         }
         html = VIZ_TEMPLATE
@@ -241,7 +310,8 @@ class Viz3DMixin(StructureState):
                           show_angles: bool = DEFAULT_SHOW_ANGLES, chain_palette: Sequence[str] = CHAIN_PALETTE,
                           viz_format: str = VIZ_FORMAT, js_url: str = VIZ_JS_URL, label_js: str = CHAIN_LABEL_JS,
                           angles_js: str = ANGLES_JS, title_font_px: int = TITLE_FONT_PX,
-                          angles_font_px: int = ANGLES_FONT_PX) -> HTML:
+                          angles_font_px: int = ANGLES_FONT_PX, highlight: dict[str, Sequence[int] | str] | None = None,
+                          dim_alpha: float = VIZ_DIM_ALPHA, highlight_sticks: bool = False) -> HTML:
         """Show the structure in Jupyter as a clickable 3Dmol.js view, with an optional centered title.
 
         Args:
@@ -260,21 +330,30 @@ class Viz3DMixin(StructureState):
             angles_js: JavaScript that converts a quaternion into x, y, z degrees.
             title_font_px: Font size of the title in pixels.
             angles_font_px: Font size of the angle overlay in pixels.
+            highlight: Chain ID to the residues to highlight, as PDB residue numbers or text such as "10-25,40",
+                e.g. {'A': '10-25', 'B': [4, 7]}. Every other residue, also of chains not listed, is drawn at dim_alpha.
+                Unloaded chains are ignored. None draws everything normally.
+            dim_alpha: Opacity from 0 to 1 of the residues that are not highlighted; only used with highlight.
+            highlight_sticks: Whether highlighted residues also show their side chains as sticks.
 
         Returns:
             An IPython HTML object with the title and the view.
 
         Raises:
-            ValueError: If angles does not hold three values or style is unknown.
+            ValueError: If angles does not hold three values, style is unknown, dim_alpha is outside 0 to 1, or a
+                highlight text is malformed.
         """
         if len(angles) != 3:
             raise ValueError("angles must contain three values (x, y, z) in degrees.")
         if style not in VIZ_STYLES:
             raise ValueError(f"style must be one of {VIZ_STYLES}.")
+        if not 0 <= dim_alpha <= 1:
+            raise ValueError("dim_alpha must be between 0 and 1.")
         start = time.perf_counter()
         palette = self._chain_colors(colors, chain_palette)
         html = self._viewer_html(angles, chain_id, palette, style, background, size, show_angles,
-                                 viz_format, js_url, label_js, angles_js, angles_font_px)
+                                 viz_format, js_url, label_js, angles_js, angles_font_px,
+                                 self._highlight_numbers(highlight), dim_alpha, highlight_sticks)
         if title:
             heading = (f'<div class="viz3d-title" style="width:{size}px;margin:0 auto 4px auto;text-align:center;font-family:sans-serif;'
                        f'font-size:{title_font_px}px;font-weight:bold">{escape(str(title))}</div>')

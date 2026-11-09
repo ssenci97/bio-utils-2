@@ -54,7 +54,12 @@ iface = s.interface_residue_table("A", "B")      # one row per interface residue
 fig, ax = s.plot_contact_map("A", "B", crop=True)           # contact map of one chain pair
 fig, ax = s.plot_multi_contact_map(["A", "B", "C"])         # all three chains on one map
 view = s.show_structure_3d()                                # interactive 3D view; display it in Jupyter
+view = s.show_structure_3d(highlight={"A": "10-20"})        # other residues drawn at dim_alpha=0.25
 ```
+
+![Contact map of the three chains of 1AAY](assets/contact_map_1aay.png)
+
+![Normal view and highlighted view with the other residues at alpha 0.25](assets/highlight_dim_alpha.png)
 
 ## Files
 

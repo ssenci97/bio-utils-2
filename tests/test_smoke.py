@@ -126,6 +126,21 @@ def test_plots_and_exports(sync, tmp_path):
         assert "\t" in path.read_text().splitlines()[0]
 
 
+def test_viz_highlight(sync):
+    plain = sync.show_structure_3d().data
+    assert "hl=null" in plain and "dim=0.25" in plain and "sticks=false" in plain
+    view = sync.show_structure_3d(highlight={"A": "3-5,9", "B": [2], "Z": "1"}).data
+    assert 'hl={"A": [3, 4, 5, 9], "B": [2]}' in view and "dim=0.25" in view
+    dimmed = sync.show_structure_3d(highlight={"A": [1]}, dim_alpha=0.1, highlight_sticks=True).data
+    assert "dim=0.1" in dimmed and "sticks=true" in dimmed
+    assert len({plain, view, dimmed}) == 3
+    assert sync.show_structure_3d(highlight={}).data == plain
+    with pytest.raises(ValueError, match="dim_alpha"):
+        sync.show_structure_3d(highlight={"A": [1]}, dim_alpha=1.5)
+    with pytest.raises(ValueError, match="Invalid residue selection"):
+        sync.show_structure_3d(highlight={"A": "1-x"})
+
+
 def test_viz_and_config(sync, tmp_path):
     views = [sync.show_structure_3d(title="all"), sync.show_structure_3d(style="stick")]
     assert views[0].data != views[1].data

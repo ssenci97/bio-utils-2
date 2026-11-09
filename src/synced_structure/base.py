@@ -112,4 +112,5 @@ class StructureState:
                               background: str = ..., size: int = ..., show_angles: bool = ...,
                               chain_palette: Sequence[str] = ..., viz_format: str = ..., js_url: str = ...,
                               label_js: str = ..., angles_js: str = ..., title_font_px: int = ...,
-                              angles_font_px: int = ...) -> HTML: ...
+                              angles_font_px: int = ..., highlight: dict[str, Sequence[int] | str] | None = ...,
+                              dim_alpha: float = ..., highlight_sticks: bool = ...) -> HTML: ...

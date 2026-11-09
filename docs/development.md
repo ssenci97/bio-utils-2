@@ -66,6 +66,7 @@ The site is built with [MkDocs](https://www.mkdocs.org/), the [Material](https:/
 mkdocs serve                       # live preview at http://127.0.0.1:8000
 mkdocs build --strict              # what the tests run; fails on any warning
 python docs/scripts/operations_graph.py   # redraw docs/assets/operations.png by hand
+python docs/scripts/guide_images.py       # redraw the guide figures in docs/assets/ (run the 1AAY docking example first for the caprieval plot)
 ```
 
 - `README.md` holds the pitch, a short install and the quick start. Pages under `docs/` hold the rest: `quickstart.md`, `guide/*.md` (concepts, conventions, configuration, docking), `tutorials/haddock/*.md` (HADDOCK3 tutorials) and `reference/*.md` (API).

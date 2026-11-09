@@ -27,6 +27,23 @@ Every docking method then clusters the rigid-body models (`clustfcc`), keeps the
 
 Partners that come from the same structure, or that touch, are moved apart with random rotations (`separate="auto"`), so the docking does not start from the answer. Override the preset of any module with `module_params={"rigidbody": {"sampling": 1000}}`.
 
+### Molecules with several chains
+
+![Three chains become two HADDOCK3 molecules: B and C form one rigid body, A another](../assets/partners_two_plus_one.png)
+
+A partner is what HADDOCK3 calls a *molecule*, and it can hold several chains. To dock two chains against one chain, pass a list for the first partner:
+
+```python
+dock = s.prepare_haddock_docking(["B", "C"], "A", workdir="dock_duplex", method="oracle", seed=7)
+dock.residue_table().groupby(["segid", "chain_key"]).size()    # A: chains B and C, B: chain A
+```
+
+- Each partner gets one HADDOCK3 segment ID (`A`, `B`, ... in argument order) and is written as one PDB file. HADDOCK3 moves the chains of a partner together as a single rigid body in `rigidbody`, and lets them relax in `emref` or `mdref`, so give chains together only when you trust their relative arrangement (a known dimer, a duplex).
+- Author residue numbers are kept when they are unique across the partner's chains; otherwise the partner is renumbered from 1 with a gap of 10 between chains. `residue_table()` maps HADDOCK3 numbers back to chain keys and your numbering.
+- A chain belongs to one partner only, and a run takes 2 to 52 partners. Restraints must join two different partners; restraints between chains of the same partner are not needed because they never move relative to each other.
+- If the arrangement of the chains is uncertain, make each chain its own partner (`"A", "B", "C"`): HADDOCK3 then docks three bodies, which needs restraints between the pairs and far more sampling.
+- Chains of different structures go in separate partners, as `(structure, chains)`. To keep chains of different structures in one partner, merge them into one structure first (`subset_chains`, `add_chain`, `rename_chains`).
+
 ## 2. Add restraints
 
 Restraints are given on the original chains, in `reference` (default), `sequence` or `author` numbering, and are translated to HADDOCK3 numbering through the residue map.
@@ -71,7 +88,22 @@ best = dock.load_docked_model(0)
 best.interface_complex("A", "B")             # analyse it like any other structure
 ```
 
+![HADDOCK score against i-RMSD of the final models of a downsized 1AAY re-docking, colored by DockQ](../assets/docking_caprieval_1aay.png)
+
+`plot_caprieval` draws this plot; the example `examples/docking/1aay_two_chains_oracle.py` produces the models.
+
 Docked models keep the reference sequences and numbering of the input chains, so contacts and interfaces of a model compare directly with the input.
+
+Highlight residues of a model, such as the restrained ones, and draw the rest at a reduced opacity:
+
+![Chain traces of 1AAY drawn normally, and with highlighted residues opaque and the rest at alpha 0.25](../assets/highlight_dim_alpha.png)
+
+<!-- skip-test -->
+```python
+best.show_structure_3d(highlight={"A": "20-30,45", "B": [3, 4, 5]},   # PDB residue numbers per chain
+                       dim_alpha=0.25,                              # opacity of every other residue
+                       highlight_sticks=True)                       # side chains of the highlighted residues as sticks
+```
 
 ## Alanine scan
 
